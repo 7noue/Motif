@@ -16,14 +16,13 @@ if not TMDB_API_KEY:
     raise ValueError("❌ Missing TMDB_API_KEY.")
 
 # --- STEP 1: LOAD FULL DATA ---
-input_file = "data/cleaned_movies.csv"  # Ensure this path is correct relative to where you run the script
+input_file = "data/cleaned_movies.csv" 
 print("📂 Loading dataset...")
 df = pd.read_csv(input_file)
 
-# --- CHANGED: Filter to top 100 ---
+# --- Filter to top 100 ---
 df = df.sort_values(by='popularity', ascending=False).head(100).copy()
 print(f"✅ Filtered to top {len(df)} popular movies.")
-
 
 # --- STEP 2: SETUP HYBRID CACHE ---
 def init_cache():
@@ -33,7 +32,13 @@ def init_cache():
         CREATE TABLE IF NOT EXISTS assets (
             movie_id INTEGER PRIMARY KEY,
             poster_url TEXT,
-            trailer_url TEXT
+            trailer_url TEXT,
+            director TEXT,
+            cast TEXT,
+            writer TEXT,
+            cinematographer TEXT,
+            composer TEXT,
+            producer TEXT
         )
     ''')
     conn.commit()
@@ -43,14 +48,20 @@ init_cache()
 
 # --- STEP 3: HELPER FUNCTIONS ---
 def fetch_tmdb_assets(movie_id):
+    """
+    Fetches Poster, Trailer, and Extended Crew.
+    """
     conn = sqlite3.connect('motif_assets.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT poster_url, trailer_url FROM assets WHERE movie_id=?", (movie_id,))
+    cursor.execute(
+        "SELECT poster_url, trailer_url, director, cast, writer, cinematographer, composer, producer FROM assets WHERE movie_id=?", 
+        (movie_id,)
+    )
     cached = cursor.fetchone()
     conn.close()
 
     if cached:
-        return cached[0], cached[1]
+        return cached
 
     try:
         url_details = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}"
@@ -64,23 +75,48 @@ def fetch_tmdb_assets(movie_id):
         trailer_key = next((v['key'] for v in results if v['site'] == 'YouTube' and v['type'] == 'Trailer'), None)
         trailer_url = f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else ""
 
+        url_credits = f"https://api.themoviedb.org/3/movie/{movie_id}/credits?api_key={TMDB_API_KEY}"
+        credits_data = requests.get(url_credits).json()
+        crew = credits_data.get('crew', [])
+        cast_list = credits_data.get('cast', [])
+
+        top_cast = [member['name'] for member in cast_list[:6]]
+        cast_str = ", ".join(top_cast) if top_cast else ""
+
+        directors = [m['name'] for m in crew if m['job'] == 'Director']
+        director_str = ", ".join(directors)
+
+        writers = [m['name'] for m in crew if m['job'] in ['Screenplay', 'Writer', 'Story']]
+        writers = list(dict.fromkeys(writers))
+        writer_str = ", ".join(writers[:3])
+
+        cines = [m['name'] for m in crew if m['job'] == 'Director of Photography']
+        cine_str = ", ".join(cines)
+
+        composers = [m['name'] for m in crew if m['job'] == 'Original Music Composer']
+        composer_str = ", ".join(composers)
+
+        producers = [m['name'] for m in crew if m['job'] == 'Producer']
+        producer_str = ", ".join(producers[:3])
+
         conn = sqlite3.connect('motif_assets.db')
         cursor = conn.cursor()
-        cursor.execute("INSERT OR REPLACE INTO assets VALUES (?, ?, ?)", (movie_id, poster_url, trailer_url))
+        cursor.execute(
+            "INSERT OR REPLACE INTO assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+            (movie_id, poster_url, trailer_url, director_str, cast_str, writer_str, cine_str, composer_str, producer_str)
+        )
         conn.commit()
         conn.close()
         
         time.sleep(0.2) 
-        return poster_url, trailer_url
+        return poster_url, trailer_url, director_str, cast_str, writer_str, cine_str, composer_str, producer_str
+
     except Exception as e:
-        return "", ""
+        print(f"Error fetching {movie_id}: {e}")
+        return "", "", "", "", "", "", "", ""
 
 def generate_vibes_batch(batch_df):
-    """
-    Sends a batch to Local Ollama (Llama 3.1).
-    Optimized for MEMES, POP CULTURE, and HUMAN CONTEXT (Occasions).
-    """
-    # 1. Format the input list
+    # (Unchanged Prompt Logic as requested)
     movies_text = ""
     for idx, row in batch_df.iterrows():
         movies_text += (
@@ -89,7 +125,6 @@ def generate_vibes_batch(batch_df):
             f"Overview: {row['overview']}\n---\n"
         )
 
-    # 2. The "Culture Vulture" Prompt (Updated for Context)
     prompt = f"""
     You are a blunt, internet-savvy film curator. 
     I will give you a list of movies. Use your OWN knowledge + the overview.
@@ -100,9 +135,9 @@ def generate_vibes_batch(batch_df):
     1. The Aesthetic/Mood: (e.g., "Neon-noir", "Anxiety-inducing", "Cozy").
     2. The "Sauce": Iconic memes, quotes, or actor appeal (e.g., "Patrick Bateman's skincare routine", "The sheer audacity of Nic Cage").
     3. The "Human Context" (CRITICAL):
-       - WHEN to watch: (e.g., "Christmas classic", "3 AM doomscrolling", "First date danger zone", "Sunday hangover cure").
-       - WHO to watch with: (e.g., "Watch with the boys", "Strictly solo watch").
-    
+        - WHEN to watch: (e.g., "Christmas classic", "3 AM doomscrolling", "First date danger zone", "Sunday hangover cure").
+        - WHO to watch with: (e.g., "Watch with the boys", "Strictly solo watch").
+     
     ### ANTI-HALLUCINATION RULES:
     - If a movie is NOT associated with a specific holiday (like Christmas/Halloween), DO NOT invent one. Instead, use a setting like "Rainy afternoon" or "Late night".
     - Focus on how REAL people consume this content.
@@ -124,9 +159,7 @@ def generate_vibes_batch(batch_df):
             messages=[{'role': 'user', 'content': prompt}],
             format='json'
         )
-        content = response['message']['content']
-        return json.loads(content)
-
+        return json.loads(response['message']['content'])
     except Exception as e:
         print(f"⚠️ Error: {e}")
         return []
@@ -135,46 +168,79 @@ def generate_vibes_batch(batch_df):
 print("🚀 Starting enrichment (100 Movies) with Local Ollama...")
 tqdm.pandas() 
 
-print(" ⬇️ Fetching Assets...")
-df[['poster_url', 'trailer_url']] = df['id'].progress_apply(
+print(" ⬇️ Fetching Assets (Deep Crew Extraction)...")
+df[['poster_url', 'trailer_url', 'director', 'cast', 'writer', 'cinematographer', 'composer', 'producer']] = df['id'].progress_apply(
     lambda x: pd.Series(fetch_tmdb_assets(x))
 )
 
 print(" 🧠 Generating Hybrid Vibes...")
-
 batch_size = 1
 results_map = {}
 chunks = [df[i:i + batch_size] for i in range(0, df.shape[0], batch_size)]
 
 for chunk in tqdm(chunks):
     batch_results = generate_vibes_batch(chunk)
-    
     if batch_results:
-        if isinstance(batch_results, dict):
-            batch_results = [batch_results]
-
+        if isinstance(batch_results, dict): batch_results = [batch_results]
         for item in batch_results:
             item_id = item.get('id') or item.get('ID')
             item_vibe = item.get('vibe') or item.get('Vibe')
-            if item_id:
-                results_map[item_id] = item_vibe
+            if item_id: results_map[item_id] = item_vibe
+
+df['synthetic_vibe'] = df['id'].map(results_map).fillna("")
+
+# --- IMPROVED RAG CONTENT CONSTRUCTION (ADDED STUDIO, COUNTRY, LANGUAGE) ---
+print(" 📝 Building Narrative RAG Strings...")
+
+def build_narrative_rag(row):
+    """
+    Constructs a natural language paragraph including Studio, Country, and Language.
+    """
+    # 1. The "Identity" Sentence
+    identity = f"{row['title']} ({row['year']}) is a {row['genres_str']} film directed by {row['director']}."
     
-    # --- CHANGED: Checkpoint every 10 movies (since we only have 100) ---
-    if len(results_map) % 10 == 0:
-        df['synthetic_vibe'] = df['id'].map(results_map)
-        df.to_csv("motif_mvp_100_CHECKPOINT.csv", index=False)
+    # 2. Origin Details (Studio, Country, Language) -- ADDED
+    origin = ""
+    
+    # Studio (Production Companies)
+    studio = str(row.get('production_companies_str', ''))
+    if studio and studio.lower() != 'nan':
+        origin += f" Produced by {studio}."
+        
+    # Country & Language
+    # Use generic "Country" if available
+    country = str(row.get('production_countries', '')) # Assuming this column exists in your CSV
+    if country and country.lower() != 'nan' and country != '[]':
+         origin += f" Country: {country}."
 
-df['synthetic_vibe'] = df['id'].map(results_map)
-df['synthetic_vibe'] = df['synthetic_vibe'].fillna("")
+    lang = str(row.get('original_language', ''))
+    if lang and lang.lower() != 'nan':
+         origin += f" Language: {lang}."
 
-df['rag_content'] = (
-    "Title: " + df['title'].astype(str) + ". " +
-    "Vibe: " + df['synthetic_vibe'].astype(str) + ". " +
-    "Genres: " + df.get('genres_str', pd.Series([''] * len(df))).astype(str) + ". " +
-    "Keywords: " + df.get('keywords_str', pd.Series([''] * len(df))).astype(str)
-)
+    # 3. The "Vibe & Story" 
+    content = f"Vibe: {row['synthetic_vibe']}. Plot: {row['overview']}"
+    
+    # 4. The "Key People"
+    people = f"Starring {row['cast']}."
+    if row['writer'] and row['writer'] != 'nan':
+        people += f" Written by {row['writer']}."
+    if row['composer'] and row['composer'] != 'nan':
+        people += f" Score by {row['composer']}."
+        
+    # 5. The "Context"
+    context = f"It has a runtime of {row['runtime']} minutes and a viewer rating of {row['vote_average']}/10."
+    
+    if row['tagline'] and str(row['tagline']) != 'nan':
+        context += f" Tagline: '{row['tagline']}'."
+
+    # OPTIONAL: Keywords
+    keywords = f"Keywords: {row['keywords_str']}."
+    
+    return f"{identity} {origin} {content} {people} {context} {keywords}"
+
+df['rag_content'] = df.apply(build_narrative_rag, axis=1)
 
 # --- STEP 5: SAVE ---
-output_file = "motif_mvp_100_local.csv"
+output_file = "motif_mvp_100_clean_rag.csv"
 df.to_csv(output_file, index=False)
 print(f"✅ DONE! Saved 100 movies to {output_file}")
