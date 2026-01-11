@@ -88,52 +88,52 @@ def fetch_tmdb_assets(movie_id):
 def generate_vibes_batch(batch_df):
     """
     Sends a batch to Local Ollama (Llama 3.1).
+    Optimized for MEMES, POP CULTURE, and HUMAN CONTEXT (Occasions).
     """
     # 1. Format the input list
     movies_text = ""
     for idx, row in batch_df.iterrows():
         movies_text += (
             f"ID: {row['id']} | "
-            f"Movie: {row['title']} | "
-            f"Genres: {row.get('genres_str', 'Unknown')} | "
+            f"Movie: {row['title']} ({row.get('year', '')}) | "
             f"Overview: {row['overview']}\n---\n"
         )
 
-    # 2. Your Exact Prompt Logic
+    # 2. The "Culture Vulture" Prompt (Updated for Context)
     prompt = f"""
-    You are a 'Vibe Curator' for a film app. I will give you a list of movies.
-    
-    For EACH movie, write a "Hybrid Vibe" description (max 50 words).
-    
-    Your Vibe MUST combine TWO elements:
-    1. The Scenario: Social setting, mental state, or specific "use case" (e.g. "comfort watch", "trippy late-night", "good cry").
-    2. The Aesthetic: Visual style, atmosphere, pacing, or texture (e.g. "warm 70s grain", "neon-noir", "snowy isolation").
+    You are a blunt, internet-savvy film curator. 
+    I will give you a list of movies. Use your OWN knowledge + the overview.
 
-    Constraints for every movie:
-    - Do NOT describe the plot.
-    - Use comma-separated adjectives and short phrases ONLY.
-    - Focus on the HUMAN context (Who, When, Why) and the VISUAL style.
-    - Avoid generic praise like "masterpiece" or "must-watch".
+    For EACH movie, write a "Vibe" (max 60 words).
+
+    Your Vibe MUST combine these 3 layers:
+    1. The Aesthetic/Mood: (e.g., "Neon-noir", "Anxiety-inducing", "Cozy").
+    2. The "Sauce": Iconic memes, quotes, or actor appeal (e.g., "Patrick Bateman's skincare routine", "The sheer audacity of Nic Cage").
+    3. The "Human Context" (CRITICAL):
+       - WHEN to watch: (e.g., "Christmas classic", "3 AM doomscrolling", "First date danger zone", "Sunday hangover cure").
+       - WHO to watch with: (e.g., "Watch with the boys", "Strictly solo watch").
     
-    Input Movies:
-    {movies_text}
+    ### ANTI-HALLUCINATION RULES:
+    - If a movie is NOT associated with a specific holiday (like Christmas/Halloween), DO NOT invent one. Instead, use a setting like "Rainy afternoon" or "Late night".
+    - Focus on how REAL people consume this content.
 
     Output Format (Strict JSON List):
     [
-        {{"id": 12345, "vibe": "Mind-bending late-night trip, neon-soaked noir visuals, existential dread..."}},
-        {{"id": 67890, "vibe": "Warm 90s nostalgia, comfort watch, golden hour cinematography..."}}
+        {{"id": 12345, "vibe": "Pure anxiety and sweat-drenched jazz. J.K. Simmons screaming 'Not my tempo'. Perfect for when you need toxic motivation at 2 AM."}},
+        {{"id": 67890, "vibe": "The ultimate Christmas movie, actually. Yippee Ki-Yay, ventilation ducts, and Bruce Willis in a tank top. Watch with dad and a beer."}},
+        {{"id": 11223, "vibe": "Depressing but beautiful sci-fi. Ryan Gosling looks lonely in neon rain. Literally me. Strictly a 3 AM solo watch when you feel empty."}}
     ]
+
+    Input Movies:
+    {movies_text}
     """
     
     try:
-        # CALL OLLAMA LOCALLY
-        # format='json' enforces valid JSON output (supported by Llama 3.1)
         response = ollama.chat(
             model="llama3.1", 
             messages=[{'role': 'user', 'content': prompt}],
             format='json'
         )
-        
         content = response['message']['content']
         return json.loads(content)
 
