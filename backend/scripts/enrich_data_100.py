@@ -187,5 +187,5 @@ for chunk in tqdm(chunks):
 df['synthetic_vibe'] = df['id'].map(results_map).fillna("")
 
 # SAVE THE RAW MASTER DATA
-df.to_csv("motif_master_data.csv", index=False)
+df.to_csv("motif_master_data_100.csv", index=False)
 print("✅ DONE! Raw data saved to 'motif_master_data_100.csv'. Now run Script 2.")
