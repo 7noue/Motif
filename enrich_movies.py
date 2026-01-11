@@ -1,23 +1,21 @@
 import pandas as pd
-from google import genai
+import ollama
 import requests
 import sqlite3
 import time
 from tqdm import tqdm
 from dotenv import load_dotenv
 import os 
+import json
 
 # --- CONFIGURATION ---
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# We only need TMDB Key now, Gemini Key is removed
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
-if not GEMINI_API_KEY or not TMDB_API_KEY:
-    raise ValueError("❌ Missing API Keys. Please check your .env file.")
-
-# Initialize client with stripped key to avoid whitespace errors
-client = genai.Client(api_key=GEMINI_API_KEY.strip())
+if not TMDB_API_KEY:
+    raise ValueError("❌ Missing TMDB_API_KEY. Please check your .env file.")
 
 # --- STEP 1: LOAD DATA ---
 input_file = "data/cleaned_movies.csv"
@@ -87,55 +85,61 @@ def fetch_tmdb_assets(movie_id):
         print(f"⚠️ Error fetching assets for ID {movie_id}: {e}")
         return "", ""
 
-def generate_synthetic_vibe(row):
+def generate_vibes_batch(batch_df):
     """
-    Uses Gemini to create a 'Hybrid Vibe' (Scenario + Aesthetic).
-    Captures precisely 'What it feels like' AND 'What it looks like'.
+    Sends a batch to Local Ollama (Llama 3.1).
     """
+    # 1. Format the input list
+    movies_text = ""
+    for idx, row in batch_df.iterrows():
+        movies_text += (
+            f"ID: {row['id']} | "
+            f"Movie: {row['title']} | "
+            f"Genres: {row.get('genres_str', 'Unknown')} | "
+            f"Overview: {row['overview']}\n---\n"
+        )
+
+    # 2. Your Exact Prompt Logic
     prompt = f"""
-    You are a 'Vibe Curator' for a film app.
-    Movie: {row['title']}
-    Genres: {row.get('genres_str', 'Unknown')}
-    Overview: {row['overview']}
+    You are a 'Vibe Curator' for a film app. I will give you a list of movies.
     
-    Task: Write a "Hybrid Vibe" description (max 50 words).
-    Combine TWO elements:
+    For EACH movie, write a "Hybrid Vibe" description (max 50 words).
+    
+    Your Vibe MUST combine TWO elements:
     1. The Scenario: Social setting, mental state, or specific "use case" (e.g. "comfort watch", "trippy late-night", "good cry").
     2. The Aesthetic: Visual style, atmosphere, pacing, or texture (e.g. "warm 70s grain", "neon-noir", "snowy isolation").
 
-    Constraints:
+    Constraints for every movie:
     - Do NOT describe the plot.
     - Use comma-separated adjectives and short phrases ONLY.
     - Focus on the HUMAN context (Who, When, Why) and the VISUAL style.
     - Avoid generic praise like "masterpiece" or "must-watch".
     
-    Example Output: "Mind-bending late-night trip, neon-soaked noir visuals, existential dread, deep focus atmosphere, slow-burn tension, visually hypnotic."
+    Input Movies:
+    {movies_text}
+
+    Output Format (Strict JSON List):
+    [
+        {{"id": 12345, "vibe": "Mind-bending late-night trip, neon-soaked noir visuals, existential dread..."}},
+        {{"id": 67890, "vibe": "Warm 90s nostalgia, comfort watch, golden hour cinematography..."}}
+    ]
     """
     
-    max_retries = 3
-    base_wait_time = 4.0 # 4 seconds = 15 RPM (Safe zone)
+    try:
+        # CALL OLLAMA LOCALLY
+        # format='json' enforces valid JSON output (supported by Llama 3.1)
+        response = ollama.chat(
+            model="llama3.1", 
+            messages=[{'role': 'user', 'content': prompt}],
+            format='json'
+        )
+        
+        content = response['message']['content']
+        return json.loads(content)
 
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.0-flash-lite", 
-                contents=prompt
-            )
-            time.sleep(base_wait_time)
-            return response.text.strip()
-            
-        except Exception as e:
-            error_msg = str(e)
-            # Handle Rate Limits (429)
-            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                print(f"\n⏳ Hit Rate Limit on '{row['title']}'. Cooling down for 65s... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(65) # Wait out the full minute
-                continue 
-            else:
-                print(f"⚠️ Error generating vibe for {row['title']}: {e}")
-                return ""
-    
-    return "" # Return empty if all retries fail
+    except Exception as e:
+        print(f"⚠️ Batch failed: {e}")
+        return []
 
 def sanity_check(df):
     print("\n--- 🧐 RUNNING SANITY CHECK ---")
@@ -146,12 +150,12 @@ def sanity_check(df):
     print("\n--- 👁️ VISUAL SAMPLE (First 2 Rows) ---")
     for index, row in df.head(2).iterrows():
         print(f"🎬 Title: {row['title']}")
-        print(f"✨ Vibe:  {row['synthetic_vibe'][:120]}...") 
+        print(f"✨ Vibe:   {str(row['synthetic_vibe'])[:120]}...") 
         print(f"🔗 Poster: {row['poster_url']}")
         print("-" * 40)
 
 # --- STEP 4: EXECUTION LOOP ---
-print("🚀 Starting enrichment... (Running at safe speed to avoid errors)")
+print("🚀 Starting enrichment... (Running efficiently in Batches of 1 for GPU safety)")
 tqdm.pandas() 
 
 print(" ⬇️ Fetching/Loading Assets (Hybrid Cache)...")
@@ -160,7 +164,41 @@ df[['poster_url', 'trailer_url']] = df['id'].progress_apply(
 )
 
 print(" 🧠 Generating Hybrid Vibes (Scenario + Aesthetic)...")
-df['synthetic_vibe'] = df.progress_apply(generate_synthetic_vibe, axis=1)
+
+# --- BATCH PROCESSING START ---
+# CHANGED TO 1: To prevent VRAM overflow on GTX 1660 Super
+batch_size = 1
+results_map = {}
+
+# Break DF into chunks
+chunks = [df[i:i + batch_size] for i in range(0, df.shape[0], batch_size)]
+
+for chunk in tqdm(chunks):
+    batch_results = generate_vibes_batch(chunk)
+    
+    if batch_results:
+        # Check if result is a list (expected) or dict (sometimes happens with single batch)
+        if isinstance(batch_results, dict):
+            batch_results = [batch_results]
+            
+        for item in batch_results:
+            # Flexible key access in case LLM capitalizes 'ID'
+            item_id = item.get('id') or item.get('ID')
+            item_vibe = item.get('vibe') or item.get('Vibe')
+            
+            if item_id:
+                results_map[item_id] = item_vibe
+    else:
+        print("⚠️ Warning: Skipped a batch.")
+    
+    # CHECKPOINT SAVING
+    df['synthetic_vibe'] = df['id'].map(results_map)
+    df.to_csv("motif_mvp_100_CHECKPOINT.csv", index=False)
+
+# Apply results to main DataFrame
+df['synthetic_vibe'] = df['id'].map(results_map)
+df['synthetic_vibe'] = df['synthetic_vibe'].fillna("") 
+# --- BATCH PROCESSING END ---
 
 # Create final string for Vector Search
 df['rag_content'] = (
@@ -173,6 +211,6 @@ df['rag_content'] = (
 sanity_check(df)
 
 # --- STEP 5: SAVE ---
-output_file = "motif_mvp_100.csv"
+output_file = "motif_mvp_100_local.csv"
 df.to_csv(output_file, index=False)
 print(f"✅ DONE! Saved enriched data to {output_file}")
