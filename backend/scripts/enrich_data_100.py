@@ -10,21 +10,19 @@ import json
 
 # --- CONFIGURATION ---
 load_dotenv()
-
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 if not TMDB_API_KEY:
     raise ValueError("❌ Missing TMDB_API_KEY.")
 
-# --- STEP 1: LOAD FULL DATA ---
+# --- STEP 1: LOAD DATA ---
 input_file = "data/cleaned_movies.csv" 
-print("📂 Loading dataset...")
 df = pd.read_csv(input_file)
 
-# --- Filter to top 100 ---
+# For testing, we limit to 100. For production, remove .head(100)
 df = df.sort_values(by='popularity', ascending=False).head(100).copy()
-print(f"✅ Filtered to top {len(df)} popular movies.")
+print(f"✅ Loaded {len(df)} movies.")
 
-# --- STEP 2: SETUP HYBRID CACHE ---
+# --- STEP 2: DATABASE CACHE ---
 def init_cache():
     conn = sqlite3.connect('motif_assets.db')
     cursor = conn.cursor()
@@ -46,42 +44,40 @@ def init_cache():
 
 init_cache()
 
-# --- STEP 3: HELPER FUNCTIONS ---
+# --- STEP 3: API FETCHING ---
 def fetch_tmdb_assets(movie_id):
-    """
-    Fetches Poster, Trailer, and Extended Crew.
-    """
     conn = sqlite3.connect('motif_assets.db')
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT poster_url, trailer_url, director, cast, writer, cinematographer, composer, producer FROM assets WHERE movie_id=?", 
-        (movie_id,)
-    )
+    cursor.execute("SELECT * FROM assets WHERE movie_id=?", (movie_id,))
     cached = cursor.fetchone()
     conn.close()
 
     if cached:
-        return cached
+        # Return everything except the ID (indices 1 to 8)
+        return cached[1], cached[2], cached[3], cached[4], cached[5], cached[6], cached[7], cached[8]
 
     try:
+        # 1. Details
         url_details = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}"
         data = requests.get(url_details).json()
         poster_path = data.get('poster_path')
         poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else ""
 
+        # 2. Videos
         url_videos = f"https://api.themoviedb.org/3/movie/{movie_id}/videos?api_key={TMDB_API_KEY}"
         video_data = requests.get(url_videos).json()
         results = video_data.get('results', [])
         trailer_key = next((v['key'] for v in results if v['site'] == 'YouTube' and v['type'] == 'Trailer'), None)
         trailer_url = f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else ""
 
+        # 3. Credits
         url_credits = f"https://api.themoviedb.org/3/movie/{movie_id}/credits?api_key={TMDB_API_KEY}"
         credits_data = requests.get(url_credits).json()
         crew = credits_data.get('crew', [])
         cast_list = credits_data.get('cast', [])
 
-        top_cast = [member['name'] for member in cast_list[:6]]
-        cast_str = ", ".join(top_cast) if top_cast else ""
+        top_cast = [m['name'] for m in cast_list[:6]]
+        cast_str = ", ".join(top_cast)
 
         directors = [m['name'] for m in crew if m['job'] == 'Director']
         director_str = ", ".join(directors)
@@ -99,24 +95,23 @@ def fetch_tmdb_assets(movie_id):
         producers = [m['name'] for m in crew if m['job'] == 'Producer']
         producer_str = ", ".join(producers[:3])
 
+        # Cache it
         conn = sqlite3.connect('motif_assets.db')
         cursor = conn.cursor()
-        cursor.execute(
-            "INSERT OR REPLACE INTO assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
-            (movie_id, poster_url, trailer_url, director_str, cast_str, writer_str, cine_str, composer_str, producer_str)
-        )
+        cursor.execute("INSERT OR REPLACE INTO assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+                       (movie_id, poster_url, trailer_url, director_str, cast_str, writer_str, cine_str, composer_str, producer_str))
         conn.commit()
         conn.close()
         
-        time.sleep(0.2) 
+        time.sleep(0.1)
         return poster_url, trailer_url, director_str, cast_str, writer_str, cine_str, composer_str, producer_str
 
     except Exception as e:
-        print(f"Error fetching {movie_id}: {e}")
+        print(f"Error {movie_id}: {e}")
         return "", "", "", "", "", "", "", ""
 
+# --- STEP 4: OLLAMA GENERATION ---
 def generate_vibes_batch(batch_df):
-    # (Unchanged Prompt Logic as requested)
     movies_text = ""
     for idx, row in batch_df.iterrows():
         movies_text += (
@@ -125,6 +120,7 @@ def generate_vibes_batch(batch_df):
             f"Overview: {row['overview']}\n---\n"
         )
 
+    # --- YOUR EXACT PROMPT (UNCHANGED) ---
     prompt = f"""
     You are a blunt, internet-savvy film curator. 
     I will give you a list of movies. Use your OWN knowledge + the overview.
@@ -154,27 +150,21 @@ def generate_vibes_batch(batch_df):
     """
     
     try:
-        response = ollama.chat(
-            model="llama3.1", 
-            messages=[{'role': 'user', 'content': prompt}],
-            format='json'
-        )
+        response = ollama.chat(model="llama3.1", messages=[{'role': 'user', 'content': prompt}], format='json')
         return json.loads(response['message']['content'])
     except Exception as e:
         print(f"⚠️ Error: {e}")
         return []
 
-# --- STEP 4: EXECUTION LOOP ---
-print("🚀 Starting enrichment (100 Movies) with Local Ollama...")
-tqdm.pandas() 
-
-print(" ⬇️ Fetching Assets (Deep Crew Extraction)...")
+# --- EXECUTION ---
+tqdm.pandas()
+print("⬇️ Fetching TMDB Assets...")
 df[['poster_url', 'trailer_url', 'director', 'cast', 'writer', 'cinematographer', 'composer', 'producer']] = df['id'].progress_apply(
     lambda x: pd.Series(fetch_tmdb_assets(x))
 )
 
-print(" 🧠 Generating Hybrid Vibes...")
-batch_size = 1
+print("🧠 Generating Vibes (Ollama)...")
+batch_size = 1 # Keep low for safety
 results_map = {}
 chunks = [df[i:i + batch_size] for i in range(0, df.shape[0], batch_size)]
 
@@ -186,61 +176,16 @@ for chunk in tqdm(chunks):
             item_id = item.get('id') or item.get('ID')
             item_vibe = item.get('vibe') or item.get('Vibe')
             if item_id: results_map[item_id] = item_vibe
+    
+    # Checkpoint every 50 to avoid data loss
+    if len(results_map) % 50 == 0:
+        temp_df = df.copy()
+        temp_df['synthetic_vibe'] = temp_df['id'].map(results_map)
+        temp_df.to_csv("motif_checkpoint.csv", index=False)
 
+# Final Map
 df['synthetic_vibe'] = df['id'].map(results_map).fillna("")
 
-# --- IMPROVED RAG CONTENT CONSTRUCTION (ADDED STUDIO, COUNTRY, LANGUAGE) ---
-print(" 📝 Building Narrative RAG Strings...")
-
-def build_narrative_rag(row):
-    """
-    Constructs a natural language paragraph including Studio, Country, and Language.
-    """
-    # 1. The "Identity" Sentence
-    identity = f"{row['title']} ({row['year']}) is a {row['genres_str']} film directed by {row['director']}."
-    
-    # 2. Origin Details (Studio, Country, Language) -- ADDED
-    origin = ""
-    
-    # Studio (Production Companies)
-    studio = str(row.get('production_companies_str', ''))
-    if studio and studio.lower() != 'nan':
-        origin += f" Produced by {studio}."
-        
-    # Country & Language
-    # Use generic "Country" if available
-    country = str(row.get('production_countries', '')) # Assuming this column exists in your CSV
-    if country and country.lower() != 'nan' and country != '[]':
-         origin += f" Country: {country}."
-
-    lang = str(row.get('original_language', ''))
-    if lang and lang.lower() != 'nan':
-         origin += f" Language: {lang}."
-
-    # 3. The "Vibe & Story" 
-    content = f"Vibe: {row['synthetic_vibe']}. Plot: {row['overview']}"
-    
-    # 4. The "Key People"
-    people = f"Starring {row['cast']}."
-    if row['writer'] and row['writer'] != 'nan':
-        people += f" Written by {row['writer']}."
-    if row['composer'] and row['composer'] != 'nan':
-        people += f" Score by {row['composer']}."
-        
-    # 5. The "Context"
-    context = f"It has a runtime of {row['runtime']} minutes and a viewer rating of {row['vote_average']}/10."
-    
-    if row['tagline'] and str(row['tagline']) != 'nan':
-        context += f" Tagline: '{row['tagline']}'."
-
-    # OPTIONAL: Keywords
-    keywords = f"Keywords: {row['keywords_str']}."
-    
-    return f"{identity} {origin} {content} {people} {context} {keywords}"
-
-df['rag_content'] = df.apply(build_narrative_rag, axis=1)
-
-# --- STEP 5: SAVE ---
-output_file = "motif_mvp_100_clean_rag.csv"
-df.to_csv(output_file, index=False)
-print(f"✅ DONE! Saved 100 movies to {output_file}")
+# SAVE THE RAW MASTER DATA
+df.to_csv("motif_master_data.csv", index=False)
+print("✅ DONE! Raw data saved to 'motif_master_data_100.csv'. Now run Script 2.")

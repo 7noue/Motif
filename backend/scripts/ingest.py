@@ -1,6 +1,6 @@
 import pandas as pd
 from google import genai
-from google.genai import types  # <--- NEW: Needed for config
+from google.genai import types
 import psycopg2
 from pgvector.psycopg2 import register_vector
 import time
@@ -16,7 +16,9 @@ DB_NAME = "motif_db"
 DB_USER = "postgres"
 DB_PASS = "password"
 
-# FIX 1: Use the variable, not a string
+if not GEMINI_API_KEY:
+    raise ValueError("❌ Missing GEMINI_API_KEY")
+
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- 1. PREPARE DATABASE ---
@@ -25,8 +27,10 @@ conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=D
 cur = conn.cursor()
 cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
-print("🛠️ Creating Schema (With Keywords & Tagline)...")
+print("🛠️ Creating Schema (Expanded for Metadata)...")
 cur.execute("DROP TABLE IF EXISTS movies")
+# We added: director, cast, runtime, rating, release_year, etc.
+# capable of storing the metadata for the UI to display.
 cur.execute("""
     CREATE TABLE movies (
         id SERIAL PRIMARY KEY,
@@ -36,6 +40,13 @@ cur.execute("""
         synthetic_vibe TEXT,
         poster_url TEXT,
         trailer_url TEXT,
+        director TEXT,
+        cast_members TEXT,
+        writer TEXT,
+        composer TEXT,
+        runtime INTEGER,
+        rating NUMERIC(3,1),
+        release_year INTEGER,
         genres TEXT,
         keywords TEXT,    
         tagline TEXT,     
@@ -45,49 +56,55 @@ cur.execute("""
 conn.commit()
 
 # --- 2. LOAD & PREPARE DATA ---
-print("📂 Loading Enriched CSV...")
-# Ensure this CSV exists in your folder
-# df = pd.read_csv("motif_mvp_5000_enriched.csv")
-df = pd.read_csv("motif_mvp_100_local.csv")
+# Use the file created by Script 2 (The "Rag Ready" one)
+input_csv = "motif_rag_ready.csv" 
+if not os.path.exists(input_csv):
+    # Fallback to the test file if the main one isn't there
+    input_csv = "motif_mvp_100_clean_rag.csv"
+
+print(f"📂 Loading Data from {input_csv}...")
+df = pd.read_csv(input_csv)
 df.fillna("", inplace=True)
 
-def create_rag_content(row):
-    vibe = f"Mood & Aesthetic: {row['synthetic_vibe']}"
-    identity = f"Title: {row['title']}. Theme: {row['tagline']}"
-    kw_raw = str(row.get('keywords_str', ''))
-    keywords = f"Keywords: {kw_raw[:200]}" 
-    return f"{vibe}. {identity}. {keywords}."
-
-print("🔗 Generating RAG strings...")
-df['rag_content'] = df.apply(create_rag_content, axis=1)
+# ⚠️ CRITICAL: Ensure 'rag_content' exists. 
+# We DO NOT generate it here. We use the one from the CSV.
+if 'rag_content' not in df.columns:
+    raise ValueError("❌ CSV is missing 'rag_content' column! Run Script 2 (rag.py) first.")
 
 # --- 3. EMBED & INSERT ---
-print("🧠 Generating Embeddings (Gemini)...")
+print("🧠 Generating Embeddings (Gemini text-embedding-004)...")
 
 def get_embedding(text):
     try:
-        # FIX 2: Use client.models.embed_content
+        # Generate embedding with retrieval optimization
         response = client.models.embed_content(
             model="text-embedding-004",
             contents=text,
             config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_DOCUMENT" # Optimizes vector for storage/lookup
+                task_type="RETRIEVAL_DOCUMENT" 
             )
         )
-        # FIX 3: Access object attributes, not dictionary keys
         return response.embeddings[0].values
     except Exception as e:
-        print(f"Error embedding text: {e}")
+        print(f"⚠️ Embedding Error: {e}")
         return None
 
 count = 0
+# Prepare batch insertion for speed (optional, but cleaner)
 for index, row in tqdm(df.iterrows(), total=df.shape[0]):
-    vector = get_embedding(row['rag_content'])
+    text_to_embed = row['rag_content']
+    vector = get_embedding(text_to_embed)
     
     if vector:
         cur.execute("""
-            INSERT INTO movies (tmdb_id, title, overview, synthetic_vibe, poster_url, trailer_url, genres, keywords, tagline, embedding)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO movies (
+                tmdb_id, title, overview, synthetic_vibe, 
+                poster_url, trailer_url, 
+                director, cast_members, writer, composer,
+                runtime, rating, release_year,
+                genres, keywords, tagline, embedding
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             row['id'],
             row['title'],
@@ -95,21 +112,29 @@ for index, row in tqdm(df.iterrows(), total=df.shape[0]):
             row['synthetic_vibe'],
             row['poster_url'],
             row['trailer_url'],
-            row['genres_str'],
-            row['keywords_str'],
-            row['tagline'],
+            row.get('director', ''),       # Safely get new columns
+            row.get('cast', ''),           # Note: CSV column is 'cast', DB is 'cast_members'
+            row.get('writer', ''),
+            row.get('composer', ''),
+            int(row.get('runtime', 0)) if row.get('runtime') != '' else 0,
+            float(row.get('vote_average', 0)) if row.get('vote_average') != '' else 0.0,
+            int(row.get('year', 0)) if row.get('year') != '' else 0,
+            row.get('genres_str', ''),
+            row.get('keywords_str', ''),
+            row.get('tagline', ''),
             vector
         ))
         count += 1
-        time.sleep(0.05) # Reduced sleep slightly for speed
+        time.sleep(0.05) 
 
 conn.commit()
 
 # --- 4. INDEX ---
 print("⚡ Creating HNSW Index...")
+# Creating index for fast cosine similarity search
 cur.execute("CREATE INDEX ON movies USING hnsw (embedding vector_cosine_ops);")
 conn.commit()
 cur.close()
 conn.close()
 
-print(f"✅ SUCCESS! Ingested {count} movies.")
+print(f"✅ SUCCESS! Ingested {count} movies with Rich Metadata.")
