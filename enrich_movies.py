@@ -11,22 +11,17 @@ import json
 # --- CONFIGURATION ---
 load_dotenv()
 
-# We only need TMDB Key now, Gemini Key is removed
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-
 if not TMDB_API_KEY:
-    raise ValueError("❌ Missing TMDB_API_KEY. Please check your .env file.")
+    raise ValueError("❌ Missing TMDB_API_KEY.")
 
-# --- STEP 1: LOAD DATA ---
+# --- STEP 1: LOAD FULL DATA ---
 input_file = "data/cleaned_movies.csv"
-if not os.path.exists(input_file):
-    print(f"❌ Error: Could not find {input_file}")
-    exit()
-
 print("📂 Loading dataset...")
 df = pd.read_csv(input_file)
-# Filter to top 100
-df = df.sort_values(by='popularity', ascending=False).head(100).copy()
+
+# Filter to top 5000
+df = df.sort_values(by='popularity', ascending=False).head(5000).copy()
 print(f"✅ Filtered to top {len(df)} popular movies.")
 
 # --- STEP 2: SETUP HYBRID CACHE ---
@@ -46,10 +41,7 @@ def init_cache():
 init_cache()
 
 # --- STEP 3: HELPER FUNCTIONS ---
-
 def fetch_tmdb_assets(movie_id):
-    """Fetches live data from TMDB API if not in cache"""
-    # Check Cache
     conn = sqlite3.connect('motif_assets.db')
     cursor = conn.cursor()
     cursor.execute("SELECT poster_url, trailer_url FROM assets WHERE movie_id=?", (movie_id,))
@@ -59,7 +51,6 @@ def fetch_tmdb_assets(movie_id):
     if cached:
         return cached[0], cached[1]
 
-    # API Call
     try:
         url_details = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={TMDB_API_KEY}"
         data = requests.get(url_details).json()
@@ -72,7 +63,6 @@ def fetch_tmdb_assets(movie_id):
         trailer_key = next((v['key'] for v in results if v['site'] == 'YouTube' and v['type'] == 'Trailer'), None)
         trailer_url = f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else ""
 
-        # Save to cache
         conn = sqlite3.connect('motif_assets.db')
         cursor = conn.cursor()
         cursor.execute("INSERT OR REPLACE INTO assets VALUES (?, ?, ?)", (movie_id, poster_url, trailer_url))
@@ -82,7 +72,6 @@ def fetch_tmdb_assets(movie_id):
         time.sleep(0.2) 
         return poster_url, trailer_url
     except Exception as e:
-        print(f"⚠️ Error fetching assets for ID {movie_id}: {e}")
         return "", ""
 
 def generate_vibes_batch(batch_df):
@@ -138,69 +127,45 @@ def generate_vibes_batch(batch_df):
         return json.loads(content)
 
     except Exception as e:
-        print(f"⚠️ Batch failed: {e}")
+        print(f"⚠️ Error: {e}")
         return []
 
-def sanity_check(df):
-    print("\n--- 🧐 RUNNING SANITY CHECK ---")
-    empty_vibes = df[df['synthetic_vibe'].isna() | (df['synthetic_vibe'] == "")]
-    success_count = len(df) - len(empty_vibes)
-    print(f"📊 Vibe Generation Stats: {success_count}/{len(df)} successful.")
-    
-    print("\n--- 👁️ VISUAL SAMPLE (First 2 Rows) ---")
-    for index, row in df.head(2).iterrows():
-        print(f"🎬 Title: {row['title']}")
-        print(f"✨ Vibe:   {str(row['synthetic_vibe'])[:120]}...") 
-        print(f"🔗 Poster: {row['poster_url']}")
-        print("-" * 40)
-
 # --- STEP 4: EXECUTION LOOP ---
-print("🚀 Starting enrichment... (Running efficiently in Batches of 1 for GPU safety)")
+print("🚀 Starting enrichment (5000 Movies) with Local Ollama...")
 tqdm.pandas() 
 
-print(" ⬇️ Fetching/Loading Assets (Hybrid Cache)...")
+print(" ⬇️ Fetching Assets...")
 df[['poster_url', 'trailer_url']] = df['id'].progress_apply(
     lambda x: pd.Series(fetch_tmdb_assets(x))
 )
 
-print(" 🧠 Generating Hybrid Vibes (Scenario + Aesthetic)...")
+print(" 🧠 Generating Hybrid Vibes...")
 
-# --- BATCH PROCESSING START ---
-# CHANGED TO 1: To prevent VRAM overflow on GTX 1660 Super
 batch_size = 1
 results_map = {}
-
-# Break DF into chunks
 chunks = [df[i:i + batch_size] for i in range(0, df.shape[0], batch_size)]
 
 for chunk in tqdm(chunks):
     batch_results = generate_vibes_batch(chunk)
     
     if batch_results:
-        # Check if result is a list (expected) or dict (sometimes happens with single batch)
         if isinstance(batch_results, dict):
             batch_results = [batch_results]
-            
+
         for item in batch_results:
-            # Flexible key access in case LLM capitalizes 'ID'
             item_id = item.get('id') or item.get('ID')
             item_vibe = item.get('vibe') or item.get('Vibe')
-            
             if item_id:
                 results_map[item_id] = item_vibe
-    else:
-        print("⚠️ Warning: Skipped a batch.")
     
-    # CHECKPOINT SAVING
-    df['synthetic_vibe'] = df['id'].map(results_map)
-    df.to_csv("motif_mvp_100_CHECKPOINT.csv", index=False)
+    # Save checkpoint every 50 movies (to avoid losing 8 hours of work)
+    if len(results_map) % 50 == 0:
+        df['synthetic_vibe'] = df['id'].map(results_map)
+        df.to_csv("motif_mvp_5000_CHECKPOINT.csv", index=False)
 
-# Apply results to main DataFrame
 df['synthetic_vibe'] = df['id'].map(results_map)
-df['synthetic_vibe'] = df['synthetic_vibe'].fillna("") 
-# --- BATCH PROCESSING END ---
+df['synthetic_vibe'] = df['synthetic_vibe'].fillna("")
 
-# Create final string for Vector Search
 df['rag_content'] = (
     "Title: " + df['title'].astype(str) + ". " +
     "Vibe: " + df['synthetic_vibe'].astype(str) + ". " +
@@ -208,9 +173,7 @@ df['rag_content'] = (
     "Keywords: " + df.get('keywords_str', pd.Series([''] * len(df))).astype(str)
 )
 
-sanity_check(df)
-
 # --- STEP 5: SAVE ---
-output_file = "motif_mvp_100_local.csv"
+output_file = "motif_mvp_5000_local.csv"
 df.to_csv(output_file, index=False)
-print(f"✅ DONE! Saved enriched data to {output_file}")
+print(f"✅ DONE! Saved 5000 movies to {output_file}")
