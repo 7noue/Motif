@@ -1,206 +1,151 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from google.genai import types
 import psycopg2
+from psycopg2.extras import RealDictCursor
 import os
 from dotenv import load_dotenv
 
-# --- CONFIGURATION ---
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Database Credentials
-DB_HOST = "localhost"
-DB_NAME = "motif_db"
-DB_USER = "postgres"
-DB_PASS = "password" # UPDATE THIS TO YOUR REAL PASSWORD
+# DB Config
+DB_PARAMS = {
+    "host": "localhost",
+    "database": "motif_db",
+    "user": "postgres",
+    "password": "password"
+}
 
-# Initialize Gemini Client
 client = genai.Client(api_key=GEMINI_API_KEY)
-
-app = FastAPI(title="Motif API (Gemini + Postgres)")
+app = FastAPI(title="Motif Semantic Engine v2")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- HELPER: Database Connection ---
-def get_db_connection():
-    try:
-        conn = psycopg2.connect(
-            host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS
-        )
-        return conn
-    except Exception as e:
-        print(f"❌ DB Connection Error: {e}")
-        return None
+def get_db():
+    conn = psycopg2.connect(**DB_PARAMS, cursor_factory=RealDictCursor)
+    return conn
 
-# --- HELPER: Embed Query (GEMINI) ---
-def get_query_embedding(text):
-    """
-    Generates a vector using Gemini.
-    CRITICAL: Uses 'RETRIEVAL_QUERY' to match your ingestion 'RETRIEVAL_DOCUMENT'.
-    """
+def get_embedding(text: str):
     try:
         response = client.models.embed_content(
             model="text-embedding-004",
             contents=text,
-            config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_QUERY" 
-            )
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
         )
         return response.embeddings[0].values
     except Exception as e:
-        print(f"⚠️ Embedding Error: {e}")
+        print(f"Embedding error: {e}")
         return None
 
-# --- ROUTES ---
-
-@app.get("/")
-def health_check():
-    conn = get_db_connection()
-    status = "connected" if conn else "failed"
-    if conn: conn.close()
-    return {"status": "online", "database": status}
-
 @app.get("/search")
-def vector_search(q: str, limit: int = 20, offset: int = 0):
-    """
-    Args:
-        q: The search query
-        limit: How many to return to UI (Default 20)
-        offset: For pagination (e.g., 0 for page 1, 20 for page 2)
-    """
-    vector = get_query_embedding(q)
-    if not vector:
-        raise HTTPException(status_code=500, detail="Failed to generate embedding")
-
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=500, detail="Database unavailable")
-    
+def hybrid_search(q: str, limit: int = 20, offset: int = 0):
+    vector = get_embedding(q)
+    conn = get_db()
     try:
         cur = conn.cursor()
         
-        # 1. FETCH CANDIDATES (The "Broad Net")
-        # For 5,000 films, we grab the top 100 vectors.
-        # This ensures our "Re-Ranking" has enough data to work with.
-        sql = """
-            SELECT id, title, synthetic_vibe, poster_url, overview,
-                   director, cast_members, runtime, rating, release_year, genres, tagline,
-                   (embedding <=> %s::vector) as distance
-            FROM movies
-            ORDER BY distance ASC
-            LIMIT 100 
+        # WEIGTHING: 60% Vibe, 30% Keyword, 10% Popularity
+        query = """
+            WITH semantic_results AS (
+                SELECT id, 1 - (embedding <=> %s::vector) as sim_score
+                FROM movies
+                ORDER BY embedding <=> %s::vector
+                LIMIT 100
+            ),
+            keyword_results AS (
+                SELECT id, ts_rank_cd(search_vector, websearch_to_tsquery('english', %s)) as lex_score
+                FROM movies
+                WHERE search_vector @@ websearch_to_tsquery('english', %s)
+                LIMIT 100
+            )
+            SELECT 
+                m.id, m.title, m.synthetic_vibe, m.poster_url, m.director, 
+                m.cast_members, m.release_year, m.rating, m.popularity,
+                COALESCE(s.sim_score, 0) as semantic_score,
+                COALESCE(k.lex_score, 0) as keyword_score
+            FROM movies m
+            LEFT JOIN semantic_results s ON m.id = s.id
+            LEFT JOIN keyword_results k ON m.id = k.id
+            WHERE s.id IS NOT NULL OR k.id IS NOT NULL
+            ORDER BY (
+                (COALESCE(s.sim_score, 0) * 0.6) + 
+                (COALESCE(k.lex_score, 0) * 0.3) + 
+                (LOG(GREATEST(m.popularity, 1)) / 10.0 * 0.1)
+            ) DESC
+            OFFSET %s LIMIT %s;
         """
         
-        cur.execute(sql, (vector,))
+        cur.execute(query, (vector, vector, q, q, offset, limit))
         rows = cur.fetchall()
         
-        # 2. PROCESS & FILTER
-        candidates = []
+        # --- THE CRITICAL UI MAPPING STEP ---
+        formatted_results = []
         for r in rows:
-            raw_sim = 1 - r[12]
-            
-            # Use your curve logic here...
-            min_threshold = 0.25
-            max_expected = 0.60 
+            # Calculate a combined score for the UI progress bar
+            raw_score = (r['semantic_score'] * 0.6) + (min(r['keyword_score'], 1) * 0.3)
+            # Add a small bump for popularity to the display score
+            display_score = min(raw_score + 0.1, 0.99) 
 
-            if raw_sim < min_threshold:
-                 final_score = 0.0
-            else:
-                 normalized = (raw_sim - min_threshold) / (max_expected - min_threshold)
-                 final_score = max(0.0, min(0.99, normalized))
+            formatted_results.append({
+                "id": r['id'],
+                "title": r['title'],
+                "vibe": r['synthetic_vibe'],
+                "poster_url": r['poster_url'],
+                "director": r['director'],
+                "cast": r['cast_members'],
+                "year": r['release_year'],
+                "rating": float(r['rating']),
+                "match_score": f"{display_score:.0%}" # e.g. "85%"
+            })
 
-            if final_score > 0.40:
-                candidates.append({
-                    "id": r[0],
-                    "title": r[1],
-                    "vibe": r[2],
-                    "poster_url": r[3],
-                    "overview": r[4],
-                    "director": r[5],
-                    "cast": r[6],
-                    "runtime": r[7],
-                    "rating": float(r[8]) if r[8] else 0.0,
-                    "year": r[9],
-                    "genres": r[10],
-                    "tagline": r[11],
-                    "match_score": final_score,
-                    "display_score": f"{final_score:.0%}" 
-                })
-
-        # 3. RE-RANKING
-        query_lower = q.lower()
-        if any(w in query_lower for w in ["best", "top", "rated", "highest", "masterpiece"]):
-            candidates.sort(key=lambda x: x["rating"], reverse=True)
-        else:
-            candidates.sort(key=lambda x: x["match_score"], reverse=True)
-
-        # 4. PAGINATION (The "Return Narrow" Step)
-        # Slices the list based on what the frontend asked for.
-        # e.g., list[0:20] for page 1, list[20:40] for page 2
-        start = offset
-        end = offset + limit
-        
-        return candidates[start:end]
-
-    except Exception as e:
-        print(f"SQL Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return formatted_results
     finally:
         conn.close()
 
 @app.post("/explain")
 def explain_recommendation(payload: dict):
-    """
-    Uses GEMINI to explain the match (Reasoning Agent).
-    v2.0: Optimized to leverage the "Meme-First" database tags.
-    """
     movie = payload.get("movie")
     query = payload.get("query")
-    vibe = payload.get("vibe") # This now contains "Sigma", "Coquette", etc.
-    score = payload.get("human_score", "high")
+    vibe = payload.get("vibe")
+    director = payload.get("director")
 
-    # 🔥 NEW PROMPT: The "Context Decoder"
     prompt = f"""
-    You are Motif, the AI engine that explains film through internet culture.
-    
-    DATA CONTEXT:
-    - User Query: "{query}"
-    - Movie: "{movie}"
-    - THE VIBE (Ground Truth): "{vibe}"
-    
+    You are MOTIF, a high-taste cinematic curator. You don't use "AI speak." 
+    You understand that movies are about 'feeling' and 'cultural moments.'
+
+    CONTEXT:
+    The user is looking for: "{query}"
+    You found them: "{movie}" (Directed by {director})
+    The film's Vibe Lore is: "{vibe}"
+
     TASK:
-    The 'Vibe' field contains specific internet archetypes (e.g., Sigma, Coquette, Doomer).
-    Your job is to bridge the User's Query to that Vibe.
+    Write a 2-3 sentence recommendation. 
+    - Sentence 1: Validate their search by connecting it to the film's "aesthetic dna."
+    - Sentence 2: Mention the director's style or a specific "mood" (e.g., "it's perfect for a rainy Tuesday").
+    - Tone: Like a text from a friend who watches too many movies. Use words like 'lore', 'canon', 'unhinged', or 'peak' ONLY if they fit naturally.
 
-    GUIDELINES:
-    1. **Trust the Vibe:** If the Vibe says "Sigma Male manifesto," and the user asked for "Sigma," EXPLICITLY reference that connection. Don't be vague.
-    2. **Explain the "Why":** Why is this movie considered "Coquette"? (e.g., "Because of the pastel color palette and Lana Del Rey energy").
-    3. **Tone:** Knowledgeable, slightly online, but helpful.
-    4. **Length:** 2-3 punchy sentences (max 60 words).
+    RULES:
+    - NO: "This movie is a great choice because..."
+    - NO: "Based on your query..."
+    - START WITH: A natural opener like "Honestly," "If you're chasing that..." or "This is basically the blueprint for..."
 
-    EXAMPLES:
-    - Query: "literally me" -> Vibe: "Lonely Doomer sci-fi..." 
-      -> Response: "This is the ultimate 'Literally Me' film. The 'Doomer' aesthetic of a lonely holographic romance perfectly captures the modern feeling of isolation."
-
-    - Query: "girlboss" -> Vibe: "Unihinged female rage..."
-      -> Response: "It defines the 'Good for Her' genre. The main character's descent into unhinged madness became a viral symbol of toxic female empowerment."
-
-    YOUR EXPLANATION:
+    PITCH:
     """
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash", 
+            model="gemini-2.0-flash", 
             contents=prompt
         )
-        return {"reason": response.text}
-    except Exception as e:
-        return {"reason": f"It matches the vibe: {vibe}. (System error: {str(e)})"}
+        # Clean up formatting for the UI
+        reason = response.text.strip().replace('"', '')
+        return {"reason": reason}
+    except Exception:
+        return {"reason": "Honestly, this just hits the exact frequency you're looking for. It's a total mood reset."}

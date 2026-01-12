@@ -70,14 +70,26 @@ def fetch_tmdb_assets(movie_id):
         trailer_key = next((v['key'] for v in results if v['site'] == 'YouTube' and v['type'] == 'Trailer'), None)
         trailer_url = f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else ""
 
-        # 3. Credits
+        # 3. Credits (MODIFIED WITH RICH CAST LOGIC)
         url_credits = f"https://api.themoviedb.org/3/movie/{movie_id}/credits?api_key={TMDB_API_KEY}"
         credits_data = requests.get(url_credits).json()
         crew = credits_data.get('crew', [])
         cast_list = credits_data.get('cast', [])
 
-        top_cast = [m['name'] for m in cast_list[:6]]
-        cast_str = ", ".join(top_cast)
+        # --- RICH CAST LOGIC START ---
+        rich_cast = []
+        for member in cast_list[:8]: # Grab top 8 as per patch_characters.py
+            name = member.get('name', '')
+            char = member.get('character', '').strip()
+            
+            # Filter out "Himself", "Uncredited" noise
+            if char and not any(x in char.lower() for x in ['uncredited', 'himself', 'herself']):
+                 rich_cast.append(f"{name} (as {char})")
+            else:
+                 rich_cast.append(name)
+        
+        cast_str = ", ".join(rich_cast)
+        # --- RICH CAST LOGIC END ---
 
         directors = [m['name'] for m in crew if m['job'] == 'Director']
         director_str = ", ".join(directors)
@@ -111,46 +123,62 @@ def fetch_tmdb_assets(movie_id):
         return "", "", "", "", "", "", "", ""
 
 def generate_vibes_batch(batch_df):
+    """
+    God-Tier Semantic Architect Prompt.
+    Methods: Chain-of-Thought, Delimited Schema, Semantic High-Density Tagging.
+    """
     movies_text = ""
     for idx, row in batch_df.iterrows():
         movies_text += (
-            f"ID: {row['id']} | "
-            f"Movie: {row['title']} ({row.get('year', '')}) | "
-            f"Overview: {row['overview']}\n---\n"
+            f"<FILM_INPUT>\n"
+            f"TMDB_ID: {row['id']}\n"
+            f"TITLE: {row['title']}\n"
+            f"PLOT_SUMMARY: {row['overview']}\n"
+            f"</FILM_INPUT>\n"
         )
 
-    # 🔥 UPDATED PROMPT: INJECTING "CHRONICALLY ONLINE" KEYWORDS
     prompt = f"""
-    You are a cultural historian of the internet.
-    I will give you a list of movies. 
-    
-    For EACH movie, write a "Vibe" (max 60 words) that connects the film to MODERN INTERNET CULTURE.
+    ### ROLE
+    You are a Master Metadata Architect and Polymath Cultural Historian. Your specialty is 'Latent Space Mapping'—connecting cinematic narratives to the specific, evolving vocabulary of modern internet subcultures.
 
-    Your Vibe MUST include:
-    1. **The Archetype:** Does this fit a specific internet subculture? (e.g., "Sigma Male", "Femcel", "Doomer", "Coquette", "Dark Academia", "Literally Me").
-    2. **The Aesthetic:** (e.g., "Neon-noir", "Liminal space", "Cottagecore", "Y2K grit").
-    3. **The Context:** When/Who to watch with (e.g., "3 AM doomscrolling", "For the girls", "Gym motivation").
+    ### OBJECTIVE
+    Analyze the provided films. Your goal is to generate 'Search-Optimized Vibes' that serve as high-density semantic bridges for a vector-search engine. You are not writing a review; you are engineering a search result.
 
-    Examples:
-    - Fight Club -> "The original Sigma Male manifesto. Toxic masculinity, consumerist rage, and gym motivation. The ultimate 'Literally Me' film for 3 AM doomscrolling."
-    - Marie Antoinette -> "Peak Coquette aesthetic. Sofia Coppola's pastel dream. Sad girl luxury and indie sleaze. Perfect for a girls' night in."
-    - Blade Runner 2049 -> "Lonely Doomer sci-fi. Holographic girlfriends and orange deserts. The definitive 'I look like this so I can feel like this' movie."
+    ### COGNITIVE PROCESS (Think before you write)
+    1. **Identify Cultural Pillar:** Is this a 'Literally Me' film? A 'Good for Her' anthem? A 'Corecore' staple?
+    2. **Isolate Aesthetic DNA:** What is the dominant visual/sonic 'core'? (e.g., Synthwave, Old Money, Liminal, Dreamcore, Brutalist).
+    3. **Detect Lore/Memes:** What scene is screenshotted on X/Twitter? What dialogue is trending on TikTok? (e.g., 'The business card', 'Jacob Black's Loca').
 
-    Output Format (Strict JSON List):
-    [
-        {{"id": 12345, "vibe": "..."}},
-        {{"id": 67890, "vibe": "..."}}
-    ]
+    ### OUTPUT SCHEMA (Strict JSON List)
+    Return a JSON array of objects with these EXACT fields:
+    1. "id": (integer) The original TMDB_ID.
+    2. "vibe": (string, 50-60 words) The 'Lore-Rich' summary. 
+       - MUST use Archetypes (Sigma, Doomer, Coquette, Femcel, Dark Academia).
+       - MUST use Aesthetic Keywords (Cottagecore, Neo-noir, Y2K-Grit).
+       - MUST provide 'Human Context' (e.g. '3 AM Ceiling-staring', 'Gym PR motivation', 'Post-breakup rage').
+    3. "tags": (list of strings) 6-10 'Hard Tropes'. 
+       - Examples: 'Unreliable Narrator', 'Slow Burn', 'Final Girl', 'Body Horror', 'Found Family', 'Heist'.
+       - NO generic adjectives (e.g. 'good', 'exciting', 'intense').
 
-    Input Movies:
+    ### DATA TO PROCESS
     {movies_text}
+
+    ### FINAL GUARDRAILS
+    - ZERO PREAMBLE. Return ONLY the JSON.
+    - NO HALLUCINATION: If no specific internet lore exists for a film, focus on the 'Liminal Setting' or 'Atmospheric Vibe'.
+    - DO NOT use the word 'masterpiece', 'journey', or 'gripping'.
     """
-    
+
     try:
-        response = ollama.chat(model="llama3.1", messages=[{'role': 'user', 'content': prompt}], format='json')
+        # Optimized for Llama 3.1: High density prompt with JSON mode
+        response = ollama.chat(
+            model="llama3.1", 
+            messages=[{'role': 'user', 'content': prompt}], 
+            format='json'
+        )
         return json.loads(response['message']['content'])
     except Exception as e:
-        print(f"⚠️ Error: {e}")
+        print(f"⚠️ Semantic Logic Error: {e}")
         return []
     
 # --- EXECUTION ---
