@@ -73,6 +73,7 @@ def vector_search(q: str):
     """
     1. Embeds query with Gemini.
     2. Searches Postgres for nearest neighbors.
+    3. Returns RICH metadata (Director, Cast, Runtime, etc.)
     """
     vector = get_query_embedding(q)
     if not vector:
@@ -85,9 +86,10 @@ def vector_search(q: str):
     try:
         cur = conn.cursor()
         
-        # SQL: Find vectors closest to the query
+        # UPDATED SQL: Fetching all the new columns we ingested
         sql = """
             SELECT id, title, synthetic_vibe, poster_url, overview,
+                   director, cast_members, runtime, rating, release_year, genres, tagline,
                    (embedding <=> %s::vector) as distance
             FROM movies
             ORDER BY distance ASC
@@ -99,15 +101,23 @@ def vector_search(q: str):
         
         results = []
         for r in rows:
-            # Filter matches (Distance < 0.65 is a decent loose threshold)
-            if r[5] < 0.65:
+            # Distance < 0.65 is our similarity threshold
+            # r[12] is the distance column now (13th item, index 12)
+            if r[12] < 0.65:
                 results.append({
                     "id": r[0],
                     "title": r[1],
                     "vibe": r[2],
                     "poster_url": r[3],
                     "overview": r[4],
-                    "match_score": f"{(1 - r[5]):.2%}"
+                    "director": r[5],
+                    "cast": r[6],
+                    "runtime": r[7],
+                    "rating": float(r[8]) if r[8] else 0.0,
+                    "year": r[9],
+                    "genres": r[10],
+                    "tagline": r[11],
+                    "match_score": f"{(1 - r[12]):.2%}"
                 })
         
         return results

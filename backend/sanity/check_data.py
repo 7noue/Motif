@@ -1,20 +1,22 @@
 import pandas as pd
 import os
 
-# Try to find the 100-film file first, then fall back to the 5000-film file
-filename = "motif_mvp_100_local.csv"
-if not os.path.exists(filename):
-    filename = "motif_mvp_5000_enriched.csv"
+# --- STEP 1: LOAD MASTER DATA ---
+# Get the folder where THIS script lives
+script_dir = os.path.dirname(os.path.abspath(__file__))
 
-print(f"📂 Reading from: {filename}...\n")
+# Go up one level (..) to 'backend', then down into 'data'
+input_file = os.path.join(script_dir, "../data/motif_master_data_100.csv")
+
+print(f"📂 Loading master data from: {input_file}...")
 
 try:
-    df = pd.read_csv(filename)
+    df = pd.read_csv(input_file)
     
     # Check if 'title' column exists
     if 'title' in df.columns:
         # Sort them alphabetically so it's easier to read
-        titles = sorted(df['title'].tolist())
+        titles = sorted(df['title'].astype(str).tolist())
         
         print(f"🎬 Found {len(titles)} movies:")
         print("-" * 30)
@@ -27,4 +29,7 @@ try:
         print(f"Columns found: {df.columns.tolist()}")
 
 except FileNotFoundError:
-    print(f"❌ Error: Could not find file '{filename}'. Make sure it is in the same folder as this script.")
+    print(f"❌ Error: Could not find file at '{input_file}'.")
+    print("   Make sure the file exists in the 'backend/data/' folder.")
+except Exception as e:
+    print(f"❌ An unexpected error occurred: {e}")
