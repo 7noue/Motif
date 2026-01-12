@@ -40,14 +40,16 @@
     explanation = "";
 
     try {
+      // 🔥 UPDATE: Added 'human_score' to the JSON payload
       const res = await axios.post('http://127.0.0.1:8000/explain', {
         movie: movie.title,
         query: query,
-        vibe: movie.vibe
+        vibe: movie.vibe,
+        human_score: movie.match_score // Passing the score explicitly
       });
       explanation = res.data.reason;
     } catch (e) {
-      explanation = "The system is calculating. Try again.";
+      explanation = "Thinking...";
     } finally {
       explainLoading = false;
     }
@@ -61,7 +63,7 @@
       MOTIF.
     </h1>
     <p class="text-muted-foreground text-lg">
-      Context-aware cinema search. Engineered by <span class="text-white font-bold">zxnyk</span>.
+      Context-aware cinema search.
     </p>
   </div>
 
@@ -104,8 +106,9 @@
               {movie.vibe || movie.overview}
             </p>
             <div class="flex items-center justify-between pt-2">
+
               <Badge variant="outline" class="border-white/20 text-xs font-mono">
-                {movie.match_score} Match
+                {movie.display_score} Match
               </Badge>
               <span class="text-xs font-bold text-purple-400 group-hover:translate-x-1 transition">
                 ASK WHY &rarr;
@@ -121,11 +124,16 @@
   <Dialog.Root bind:open={dialogOpen}>
     <Dialog.Content class="sm:max-w-[425px] bg-zinc-950 border-purple-500/30 text-white">
       <Dialog.Header>
-        <Dialog.Title class="text-2xl font-bold tracking-tight">
-          {selectedMovie?.title}
-        </Dialog.Title>
+        <div class="flex items-center justify-between">
+            <Dialog.Title class="text-2xl font-bold tracking-tight">
+            {selectedMovie?.title}
+            </Dialog.Title>
+            <Badge variant="secondary" class="bg-purple-500/20 text-purple-300 hover:bg-purple-500/30">
+                {selectedMovie?.display_score} Match
+            </Badge>
+        </div>
         <Dialog.Description class="text-zinc-400">
-          Why the system chose this.
+          Here's why I picked this for you.
         </Dialog.Description>
       </Dialog.Header>
       
@@ -133,17 +141,17 @@
         {#if explainLoading}
           <div class="flex items-center gap-2 text-purple-400 animate-pulse">
             <div class="h-2 w-2 bg-current rounded-full animate-bounce"></div>
-            <span class="text-sm font-medium">Analyzing context...</span>
+            <span class="text-sm font-medium">Reading the room...</span>
           </div>
         {:else}
-          <div class="text-lg leading-relaxed border-l-2 border-purple-500 pl-4 italic text-zinc-300">
+          <div class="text-base leading-relaxed border-l-2 border-purple-500 pl-4 text-zinc-300">
             "{explanation}"
           </div>
         {/if}
       </div>
 
       <Dialog.Footer>
-        <Button variant="secondary" onclick={() => dialogOpen = false}>Close</Button>
+        <Button variant="secondary" onclick={() => dialogOpen = false}>Cool</Button>
       </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>

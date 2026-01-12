@@ -69,11 +69,12 @@ def health_check():
     return {"status": "online", "database": status}
 
 @app.get("/search")
-def vector_search(q: str):
+def vector_search(q: str, limit: int = 20, offset: int = 0):
     """
-    1. Embeds query with Gemini.
-    2. Searches Postgres for nearest neighbors.
-    3. Returns RICH metadata (Director, Cast, Runtime, etc.)
+    Args:
+        q: The search query
+        limit: How many to return to UI (Default 20)
+        offset: For pagination (e.g., 0 for page 1, 20 for page 2)
     """
     vector = get_query_embedding(q)
     if not vector:
@@ -86,25 +87,38 @@ def vector_search(q: str):
     try:
         cur = conn.cursor()
         
-        # UPDATED SQL: Fetching all the new columns we ingested
+        # 1. FETCH CANDIDATES (The "Broad Net")
+        # For 5,000 films, we grab the top 100 vectors.
+        # This ensures our "Re-Ranking" has enough data to work with.
         sql = """
             SELECT id, title, synthetic_vibe, poster_url, overview,
                    director, cast_members, runtime, rating, release_year, genres, tagline,
                    (embedding <=> %s::vector) as distance
             FROM movies
             ORDER BY distance ASC
-            LIMIT 10
+            LIMIT 100 
         """
         
         cur.execute(sql, (vector,))
         rows = cur.fetchall()
         
-        results = []
+        # 2. PROCESS & FILTER
+        candidates = []
         for r in rows:
-            # Distance < 0.65 is our similarity threshold
-            # r[12] is the distance column now (13th item, index 12)
-            if r[12] < 0.65:
-                results.append({
+            raw_sim = 1 - r[12]
+            
+            # Use your curve logic here...
+            min_threshold = 0.25
+            max_expected = 0.60 
+
+            if raw_sim < min_threshold:
+                 final_score = 0.0
+            else:
+                 normalized = (raw_sim - min_threshold) / (max_expected - min_threshold)
+                 final_score = max(0.0, min(0.99, normalized))
+
+            if final_score > 0.40:
+                candidates.append({
                     "id": r[0],
                     "title": r[1],
                     "vibe": r[2],
@@ -117,10 +131,24 @@ def vector_search(q: str):
                     "year": r[9],
                     "genres": r[10],
                     "tagline": r[11],
-                    "match_score": f"{(1 - r[12]):.2%}"
+                    "match_score": final_score,
+                    "display_score": f"{final_score:.0%}" 
                 })
+
+        # 3. RE-RANKING
+        query_lower = q.lower()
+        if any(w in query_lower for w in ["best", "top", "rated", "highest", "masterpiece"]):
+            candidates.sort(key=lambda x: x["rating"], reverse=True)
+        else:
+            candidates.sort(key=lambda x: x["match_score"], reverse=True)
+
+        # 4. PAGINATION (The "Return Narrow" Step)
+        # Slices the list based on what the frontend asked for.
+        # e.g., list[0:20] for page 1, list[20:40] for page 2
+        start = offset
+        end = offset + limit
         
-        return results
+        return candidates[start:end]
 
     except Exception as e:
         print(f"SQL Error: {e}")
@@ -132,19 +160,43 @@ def vector_search(q: str):
 def explain_recommendation(payload: dict):
     """
     Uses GEMINI to explain the match (Reasoning Agent).
+    Now upgraded to understand MEMES, CULT STATUS, and CONTEXT.
     """
     movie = payload.get("movie")
     query = payload.get("query")
     vibe = payload.get("vibe")
+    score = payload.get("human_score", "high") # Use this to gauge enthusiasm if needed
 
+    # 🔥 NEW PROMPT: The "Chronically Online" Film Expert
     prompt = f"""
-    You are a blunt movie friend.
-    User wanted: "{query}"
-    You suggested: "{movie}"
-    The Vibe is: "{vibe}"
+    You are Motif, an AI engine deeply plugged into film culture, internet lore, and memes.
+    
+    CONTEXT:
+    - User Query: "{query}"
+    - Selected Movie: "{movie}"
+    - Database Vibe: "{vibe}"
+    
+    TASK:
+    Explain the connection between the Query and the Movie. 
+    Don't just describe the plot—explain the *culture* or the *meme* behind it.
 
-    Write 1 short sentence (max 20 words) explaining why this fits.
-    Be specific. Mention the 'Sauce' or aesthetic.
+    GUIDELINES:
+    1. **Identify the Meme:** If the query references a specific meme (e.g., "sigma", "loca", "literally me"), explain its origin or why it's trending.
+    2. **The "Sauce":** If it's just a vibe query, explain exactly *how* the movie nails that aesthetic (cinematography, soundtrack, iconic scenes).
+    3. **Tone:** Insightful, modern, and culturally aware. Like a video essayist condensing their thoughts into a paragraph.
+    4. **Length:** 2-3 punchy sentences (approx 40-60 words).
+
+    EXAMPLES:
+    - Query: "where have you been loca" -> Movie: "Twilight: New Moon" 
+      -> Response: "This references the unintentionally hilarious line Jacob Black delivers to Bella. It blew up on TikTok as the ultimate example of the saga's campy, melodramatic dialogue that fans obsess over."
+    
+    - Query: "sigma male grindset" -> Movie: "American Psycho" 
+      -> Response: "Patrick Bateman is the face of the ironic 'Sigma' meme culture. The internet repurposed his corporate emptiness into a satire on hustle culture and toxic masculinity."
+
+    - Query: "neon lonely driver" -> Movie: "Drive" 
+      -> Response: "The film that launched a thousand 'literally me' memes. It defines the synthwave aesthetic, combining Ryan Gosling's stoic performance with a neon-drenched LA nightscape."
+
+    YOUR EXPLANATION:
     """
 
     try:
@@ -154,4 +206,4 @@ def explain_recommendation(payload: dict):
         )
         return {"reason": response.text}
     except Exception as e:
-        return {"reason": f"It fits the vibe. (Gemini error: {str(e)})"}
+        return {"reason": f"This is a match based on the vibe: {vibe}. (System error: {str(e)})"}
