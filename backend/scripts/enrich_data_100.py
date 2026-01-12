@@ -110,7 +110,6 @@ def fetch_tmdb_assets(movie_id):
         print(f"Error {movie_id}: {e}")
         return "", "", "", "", "", "", "", ""
 
-# --- STEP 4: OLLAMA GENERATION ---
 def generate_vibes_batch(batch_df):
     movies_text = ""
     for idx, row in batch_df.iterrows():
@@ -120,29 +119,27 @@ def generate_vibes_batch(batch_df):
             f"Overview: {row['overview']}\n---\n"
         )
 
-    # --- YOUR EXACT PROMPT (UNCHANGED) ---
+    # 🔥 UPDATED PROMPT: INJECTING "CHRONICALLY ONLINE" KEYWORDS
     prompt = f"""
-    You are a blunt, internet-savvy film curator. 
-    I will give you a list of movies. Use your OWN knowledge + the overview.
+    You are a cultural historian of the internet.
+    I will give you a list of movies. 
+    
+    For EACH movie, write a "Vibe" (max 60 words) that connects the film to MODERN INTERNET CULTURE.
 
-    For EACH movie, write a "Vibe" (max 60 words).
+    Your Vibe MUST include:
+    1. **The Archetype:** Does this fit a specific internet subculture? (e.g., "Sigma Male", "Femcel", "Doomer", "Coquette", "Dark Academia", "Literally Me").
+    2. **The Aesthetic:** (e.g., "Neon-noir", "Liminal space", "Cottagecore", "Y2K grit").
+    3. **The Context:** When/Who to watch with (e.g., "3 AM doomscrolling", "For the girls", "Gym motivation").
 
-    Your Vibe MUST combine these 3 layers:
-    1. The Aesthetic/Mood: (e.g., "Neon-noir", "Anxiety-inducing", "Cozy").
-    2. The "Sauce": Iconic memes, quotes, or actor appeal (e.g., "Patrick Bateman's skincare routine", "The sheer audacity of Nic Cage").
-    3. The "Human Context" (CRITICAL):
-        - WHEN to watch: (e.g., "Christmas classic", "3 AM doomscrolling", "First date danger zone", "Sunday hangover cure").
-        - WHO to watch with: (e.g., "Watch with the boys", "Strictly solo watch").
-     
-    ### ANTI-HALLUCINATION RULES:
-    - If a movie is NOT associated with a specific holiday (like Christmas/Halloween), DO NOT invent one. Instead, use a setting like "Rainy afternoon" or "Late night".
-    - Focus on how REAL people consume this content.
+    Examples:
+    - Fight Club -> "The original Sigma Male manifesto. Toxic masculinity, consumerist rage, and gym motivation. The ultimate 'Literally Me' film for 3 AM doomscrolling."
+    - Marie Antoinette -> "Peak Coquette aesthetic. Sofia Coppola's pastel dream. Sad girl luxury and indie sleaze. Perfect for a girls' night in."
+    - Blade Runner 2049 -> "Lonely Doomer sci-fi. Holographic girlfriends and orange deserts. The definitive 'I look like this so I can feel like this' movie."
 
     Output Format (Strict JSON List):
     [
-        {{"id": 12345, "vibe": "Pure anxiety and sweat-drenched jazz. J.K. Simmons screaming 'Not my tempo'. Perfect for when you need toxic motivation at 2 AM."}},
-        {{"id": 67890, "vibe": "The ultimate Christmas movie, actually. Yippee Ki-Yay, ventilation ducts, and Bruce Willis in a tank top. Watch with dad and a beer."}},
-        {{"id": 11223, "vibe": "Depressing but beautiful sci-fi. Ryan Gosling looks lonely in neon rain. Literally me. Strictly a 3 AM solo watch when you feel empty."}}
+        {{"id": 12345, "vibe": "..."}},
+        {{"id": 67890, "vibe": "..."}}
     ]
 
     Input Movies:
@@ -155,7 +152,7 @@ def generate_vibes_batch(batch_df):
     except Exception as e:
         print(f"⚠️ Error: {e}")
         return []
-
+    
 # --- EXECUTION ---
 tqdm.pandas()
 print("⬇️ Fetching TMDB Assets...")

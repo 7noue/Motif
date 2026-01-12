@@ -160,41 +160,38 @@ def vector_search(q: str, limit: int = 20, offset: int = 0):
 def explain_recommendation(payload: dict):
     """
     Uses GEMINI to explain the match (Reasoning Agent).
-    Now upgraded to understand MEMES, CULT STATUS, and CONTEXT.
+    v2.0: Optimized to leverage the "Meme-First" database tags.
     """
     movie = payload.get("movie")
     query = payload.get("query")
-    vibe = payload.get("vibe")
-    score = payload.get("human_score", "high") # Use this to gauge enthusiasm if needed
+    vibe = payload.get("vibe") # This now contains "Sigma", "Coquette", etc.
+    score = payload.get("human_score", "high")
 
-    # 🔥 NEW PROMPT: The "Chronically Online" Film Expert
+    # 🔥 NEW PROMPT: The "Context Decoder"
     prompt = f"""
-    You are Motif, an AI engine deeply plugged into film culture, internet lore, and memes.
+    You are Motif, the AI engine that explains film through internet culture.
     
-    CONTEXT:
+    DATA CONTEXT:
     - User Query: "{query}"
-    - Selected Movie: "{movie}"
-    - Database Vibe: "{vibe}"
+    - Movie: "{movie}"
+    - THE VIBE (Ground Truth): "{vibe}"
     
     TASK:
-    Explain the connection between the Query and the Movie. 
-    Don't just describe the plot—explain the *culture* or the *meme* behind it.
+    The 'Vibe' field contains specific internet archetypes (e.g., Sigma, Coquette, Doomer).
+    Your job is to bridge the User's Query to that Vibe.
 
     GUIDELINES:
-    1. **Identify the Meme:** If the query references a specific meme (e.g., "sigma", "loca", "literally me"), explain its origin or why it's trending.
-    2. **The "Sauce":** If it's just a vibe query, explain exactly *how* the movie nails that aesthetic (cinematography, soundtrack, iconic scenes).
-    3. **Tone:** Insightful, modern, and culturally aware. Like a video essayist condensing their thoughts into a paragraph.
-    4. **Length:** 2-3 punchy sentences (approx 40-60 words).
+    1. **Trust the Vibe:** If the Vibe says "Sigma Male manifesto," and the user asked for "Sigma," EXPLICITLY reference that connection. Don't be vague.
+    2. **Explain the "Why":** Why is this movie considered "Coquette"? (e.g., "Because of the pastel color palette and Lana Del Rey energy").
+    3. **Tone:** Knowledgeable, slightly online, but helpful.
+    4. **Length:** 2-3 punchy sentences (max 60 words).
 
     EXAMPLES:
-    - Query: "where have you been loca" -> Movie: "Twilight: New Moon" 
-      -> Response: "This references the unintentionally hilarious line Jacob Black delivers to Bella. It blew up on TikTok as the ultimate example of the saga's campy, melodramatic dialogue that fans obsess over."
-    
-    - Query: "sigma male grindset" -> Movie: "American Psycho" 
-      -> Response: "Patrick Bateman is the face of the ironic 'Sigma' meme culture. The internet repurposed his corporate emptiness into a satire on hustle culture and toxic masculinity."
+    - Query: "literally me" -> Vibe: "Lonely Doomer sci-fi..." 
+      -> Response: "This is the ultimate 'Literally Me' film. The 'Doomer' aesthetic of a lonely holographic romance perfectly captures the modern feeling of isolation."
 
-    - Query: "neon lonely driver" -> Movie: "Drive" 
-      -> Response: "The film that launched a thousand 'literally me' memes. It defines the synthwave aesthetic, combining Ryan Gosling's stoic performance with a neon-drenched LA nightscape."
+    - Query: "girlboss" -> Vibe: "Unihinged female rage..."
+      -> Response: "It defines the 'Good for Her' genre. The main character's descent into unhinged madness became a viral symbol of toxic female empowerment."
 
     YOUR EXPLANATION:
     """
@@ -206,4 +203,4 @@ def explain_recommendation(payload: dict):
         )
         return {"reason": response.text}
     except Exception as e:
-        return {"reason": f"This is a match based on the vibe: {vibe}. (System error: {str(e)})"}
+        return {"reason": f"It matches the vibe: {vibe}. (System error: {str(e)})"}
