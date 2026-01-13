@@ -1,7 +1,8 @@
 import os
 import json
-from google import genai
-from google.genai import types
+import hashlib
+from typing import Optional
+from openai import OpenAI
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -19,23 +20,32 @@ class TitleResponse(BaseModel):
     titles: list[FilmEntry]
 
 class TitleGenerationLayer:
-    def __init__(self):
-        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    def __init__(self, cache_file="query_cache.json"):
+        # 1. Single Client: OpenRouter
+        # We drop Gemini/DeepSeek clients to save complexity and cost.
+        self.client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+        )
+        
+        # 2. Model Selection: The "Free" Tier
+        # Using the Xiaomi Mimo or comparable free model on OpenRouter
+        self.model_id = "xiaomi/mimo-v2-flash:free" 
+        
+        # 3. Layer 2 Intel & Cache
         self.intel = InputIntelligence()
-        self.model_id = "gemini-2.5-flash-lite" 
+        self.cache_file = cache_file
+        self.cache = self._load_cache()
 
-        # We keep your exact rules but anchor them as System Instructions
-        self.config = types.GenerateContentConfig(
-            temperature=0.3,
-            response_mime_type="application/json",
-            response_schema=TitleResponse, # This prevents JSON cut-offs
-            system_instruction="""
+        # 4. LOCKED SYSTEM PROMPT (Do Not Modify)
+        self.system_instructions = """
              You are a film association engine. Your job is to map human intent, mood, subcultural references, visual symbols, or partial information to relevant films with high cultural accuracy and "vibe" alignment.
 
             You do NOT explain. You do NOT chat. You ONLY return structured film associations.
 
             RULES (STRICT):
-            -Output ONLY a valid JSON object matching the provided schema.
+            -Output ONLY a valid JSON object matching the provided schema not including separate keys for "Act I" or "Act II.
+            -The JSON must have EXACTLY ONE root key: "titles".
             -Return a maximum of 30 titles.
             -Do NOT include TV shows, miniseries, or web content. Films only.
             -Do NOT include commentary, markdown, or extra text.
@@ -51,7 +61,6 @@ class TitleGenerationLayer:
             -Subcultural Literacy: Recognize modern internet aesthetics (Corecore, Synthwave, Dark Academia). Resolve these to the "canon" films of those online communities.
             
             RANKING GUIDELINES (THE 3-ACT STRUCTURE):
-            Rank the 30-film output according to this specific flow to ensure discovery:
             - ACT I (Titles 1-5): THE DEFINITIVES. Direct hits, the exact director requested, or the "Icons" of the requested subculture.
             - ACT II (Titles 6-20): THE VIBE-MATCHES. Films that share the same cinematic DNA, psychological profiles, or aesthetic atmosphere.
             - ACT III (Titles 21-30): THE WILDCARDS. "Deep-cut" thematic cousins that offer a fresh or unexpected perspective while remaining culturally relevant to the query.
@@ -62,55 +71,80 @@ class TitleGenerationLayer:
             -No duplicate films.
             -No "hallucinating" films that don't exist.
             """
-        )
+
+    def _get_cache_key(self, text: str) -> str:
+        return hashlib.md5(text.lower().strip().encode()).hexdigest()
+
+    def _load_cache(self):
+        if os.path.exists(self.cache_file):
+            with open(self.cache_file, "r") as f:
+                return json.load(f)
+        return {}
+
+    def _save_to_cache(self, key, data):
+        self.cache[key] = data
+        with open(self.cache_file, "w") as f:
+            json.dump(self.cache, f)
 
     def fetch_titles(self, raw_input: str) -> TitleResponse:
-        # 1. Intelligence Check (Layer 2)
+        # 1. Intelligence Check
         processed = self.intel.classify_intent(raw_input)
-        
         if processed.intent == QueryIntent.LOW_SIGNAL:
-            return self._get_fallback_titles()
+            return self._get_hard_fallback()
 
-        # 2. Generation (Layer 3)
+        # 2. Cache Check (Save time/API calls)
+        cache_key = self._get_cache_key(processed.normalized_text)
+        if cache_key in self.cache:
+            print(f"🚀 Cache Hit: {processed.normalized_text}")
+            return TitleResponse(titles=[FilmEntry(**t) for t in self.cache[cache_key]])
+
+        # 3. Generation (OpenRouter ONLY)
+        print(f"📡 Calling OpenRouter ({self.model_id})...")
         try:
-            response = self.client.models.generate_content(
+            response = self.client.chat.completions.create(
                 model=self.model_id,
-                contents=processed.normalized_text,
-                config=self.config
+                messages=[
+                    {"role": "system", "content": self.system_instructions + "\nReturn ONLY valid JSON."},
+                    {"role": "user", "content": processed.normalized_text},
+                ],
+                # 'json_object' ensures the model tries to output strictly JSON
+                response_format={'type': 'json_object'},
+                temperature=0.3
             )
-            # Use .parsed to get the Pydantic object directly
-            return response.parsed if response.parsed else self._get_fallback_titles()
+            
+            raw_content = response.choices[0].message.content
+            parsed_response = TitleResponse.model_validate_json(raw_content)
+            
+            # Save to cache on success
+            self._save_to_cache(cache_key, [t.model_dump() for t in parsed_response.titles])
+            
+            return parsed_response
 
         except Exception as e:
-            print(f"[fetch_titles] Error: {e}")
-            return self._get_fallback_titles()
+            print(f"❌ OpenRouter Error: {e}")
+            return self._get_hard_fallback()
 
-    def _get_fallback_titles(self) -> TitleResponse:
-        print(">> Triggering Fallback List")
+    def _get_hard_fallback(self) -> TitleResponse:
+        print(">> Triggering Hard Fallback List")
         return TitleResponse(titles=[
-            FilmEntry(title="Inception", year=2010),
-            FilmEntry(title="The Matrix", year=1999),
-            FilmEntry(title="Interstellar", year=2014)
+            {"title": "Inception", "year": 2010},
+            {"title": "The Matrix", "year": 1999},
+            {"title": "Blade Runner 2049", "year": 2017}
         ])
 
 if __name__ == "__main__":
     layer = TitleGenerationLayer()
     
-    # Test
-    query = "Sigma grindset"
+    # Test 1
+    query = "Dead poets society"
     result = layer.fetch_titles(query)
-    print(f"\nResults for '{query}':")
-    for t in result.titles[:10]:
-        print(f" - {t.title} ({t.year})"),
-
-    query = "neon city loneliness"
-    result = layer.fetch_titles(query)
-    print(f"\nResults for '{query}':")
-    for t in result.titles[:10]:
+    print(f"\n[Final Results for '{query}']: {len(result.titles)} films found.")
+    for t in result.titles[:5]:
         print(f" - {t.title} ({t.year})")
 
-    query = "california dreaming"
+    # Test 2
+    query = "Sigma grindset"
     result = layer.fetch_titles(query)
-    print(f"\nResults for '{query}':")
-    for t in result.titles[:10]:
+    print(f"\n[Final Results for '{query}']: {len(result.titles)} films found.")
+    for t in result.titles[:5]:
         print(f" - {t.title} ({t.year})")
