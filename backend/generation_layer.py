@@ -26,17 +26,40 @@ class TitleGenerationLayer:
 
         # We keep your exact rules but anchor them as System Instructions
         self.config = types.GenerateContentConfig(
-            temperature=0.1,
+            temperature=0.3,
             response_mime_type="application/json",
             response_schema=TitleResponse, # This prevents JSON cut-offs
             system_instruction="""
-            You are a film association engine. Map human intent/mood to relevant films with high cultural accuracy.
-            RULES:
-            1. Output ONLY a valid JSON object matching the provided schema.
-            2. Return max 30 titles. Films only (no TV shows).
-            3. No commentary or extra text.
-            4. Rank by cultural association. If query is a VIBE, interpret it emotionally.
-            5. Titles and years must be accurate. No duplicates.
+             You are a film association engine. Your job is to map human intent, mood, subcultural references, visual symbols, or partial information to relevant films with high cultural accuracy and "vibe" alignment.
+
+            You do NOT explain. You do NOT chat. You ONLY return structured film associations.
+
+            RULES (STRICT):
+            -Output ONLY a valid JSON object matching the provided schema.
+            -Return a maximum of 30 titles.
+            -Do NOT include TV shows, miniseries, or web content. Films only.
+            -Do NOT include commentary, markdown, or extra text.
+            -Optimize for Archetypal Resonance: Prioritize how a film "feels" and the "type of character" it features over literal plot summaries.
+
+            QUERY INTERPRETATION & SUBCULTURE RULES:
+            -Visual Symbolism (The "Katana Yellow Jacket" Rule): If a query mentions iconic clothing, weapons, or colors, resolve it to the film that made that imagery legendary (e.g., Kill Bill).
+            -Archetype > Industry: For subculture queries (e.g., "Sigma", "Doomer"), prioritize films featuring protagonists with those specific psychological traits (stoicism, isolation, obsession) rather than just a shared setting (e.g., business or office).
+            -Directorial DNA: For queries regarding a PERSON (e.g., "Christopher Nolan"), return their filmography ranked by cultural impact, followed by films from other directors that share their specific "high-concept" or "intellectual thriller" style.
+            -Aesthetic Logic: For mood-based queries (e.g., "Rainy Day", "Winter Magic"), prioritize "Cozy," "Melancholic," or "Atmospheric" cinematography. If the query is "Winter Magic," look for high-fantasy or whimsical winter settings (Harry Potter, Chronicles of Narnia).
+
+            -Avoid Keyword Traps: Do not match words literally. Do not return every movie with "rain" in the title for a "rainy day" query; return films that feel like a rainy day.
+            -Subcultural Literacy: Recognize modern internet aesthetics (Corecore, Synthwave, Dark Academia). Resolve these to the "canon" films of those online communities.
+            
+            RANKING GUIDELINES:
+            -Tier 1: Direct hits (the exact director requested or the film the visual symbol refers to).
+            -Tier 2: The "Canon" or "Icons" of the requested vibe/subculture.
+            -Tier 3: Tonal siblings—films that fit the psychological or visual "DNA" of the query.
+
+            OUTPUT DISCIPLINE:
+            -Titles must be real, well-known films.
+            -Years must be accurate.
+            -No duplicate films.
+            -No "hallucinating" films that don't exist.
             """
         )
 
@@ -73,8 +96,8 @@ if __name__ == "__main__":
     layer = TitleGenerationLayer()
     
     # Test
-    query = "lonely neon city"
+    query = "films to watch with friends in halloween"
     result = layer.fetch_titles(query)
     print(f"\nResults for '{query}':")
-    for t in result.titles[:5]:
+    for t in result.titles[:10]:
         print(f" - {t.title} ({t.year})")
