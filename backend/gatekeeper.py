@@ -86,21 +86,21 @@ class InputIntelligence:
 
 # --- Implementation Example ---
 
-processor = InputIntelligence()
+# processor = InputIntelligence()
 
-# Test cases based on your examples
-inputs = [
-    "Joker Movie",       # Standard
-    "joker 2019",        # Specific
-    "   joker    joaquin!!! ", # Dirty
-    "Joker Movie",       # Repeat
-    "a",                 # Low signal
-    "scifi",             # Vague
-]
+# # Test cases based on your examples
+# inputs = [
+#     "Joker Movie",       # Standard
+#     "joker 2019",        # Specific
+#     "   joker    joaquin!!! ", # Dirty
+#     "Joker Movie",       # Repeat
+#     "a",                 # Low signal
+#     "scifi",             # Vague
+# ]
 
-print(f"{'RAW INPUT':<20} | {'NORMALIZED':<20} | {'INTENT'}")
-print("-" * 65)
+# print(f"{'RAW INPUT':<20} | {'NORMALIZED':<20} | {'INTENT'}")
+# print("-" * 65)
 
-for i in inputs:
-    result = processor.classify_intent(i)
-    print(f"{result.original_text:<20} | {result.normalized_text:<20} | {result.intent.name}")
+# for i in inputs:
+#     result = processor.classify_intent(i)
+#     print(f"{result.original_text:<20} | {result.normalized_text:<20} | {result.intent.name}")

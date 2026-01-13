@@ -109,7 +109,7 @@ if __name__ == "__main__":
     for t in result.titles[:10]:
         print(f" - {t.title} ({t.year})")
 
-    query = "wong kar wai"
+    query = "california dreaming"
     result = layer.fetch_titles(query)
     print(f"\nResults for '{query}':")
     for t in result.titles[:10]:
