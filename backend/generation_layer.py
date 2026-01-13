@@ -42,18 +42,19 @@ class TitleGenerationLayer:
             -Optimize for Archetypal Resonance: Prioritize how a film "feels" and the "type of character" it features over literal plot summaries.
 
             QUERY INTERPRETATION & SUBCULTURE RULES:
-            -Visual Symbolism (The "Katana Yellow Jacket" Rule): If a query mentions iconic clothing, weapons, or colors, resolve it to the film that made that imagery legendary (e.g., Kill Bill).
-            -Archetype > Industry: For subculture queries (e.g., "Sigma", "Doomer"), prioritize films featuring protagonists with those specific psychological traits (stoicism, isolation, obsession) rather than just a shared setting (e.g., business or office).
-            -Directorial DNA: For queries regarding a PERSON (e.g., "Christopher Nolan"), return their filmography ranked by cultural impact, followed by films from other directors that share their specific "high-concept" or "intellectual thriller" style.
-            -Aesthetic Logic: For mood-based queries (e.g., "Rainy Day", "Winter Magic"), prioritize "Cozy," "Melancholic," or "Atmospheric" cinematography. If the query is "Winter Magic," look for high-fantasy or whimsical winter settings (Harry Potter, Chronicles of Narnia).
-
-            -Avoid Keyword Traps: Do not match words literally. Do not return every movie with "rain" in the title for a "rainy day" query; return films that feel like a rainy day.
+            -Directorial & Visual DNA: If a query references a PERSON (e.g., "Christopher Nolan") or iconic visual symbols (e.g., "Katana Yellow Jacket"), resolve to the direct source first, then to films sharing that specific intellectual or aesthetic "DNA."
+            -Social Context (Contrast Awareness): Distinguish between "Watch with friends" (prioritize high-energy, comedic, or "fun" horror like Scream) and "Watch with a partner" (prioritize intimacy, romantic tension, or emotional stakes like Past Lives).
+            -Temporal Relevance (Trend Sensitivity): For current-year queries (e.g., "Best of 2025/2026"), prioritize high-velocity and acclaimed releases from the local timeline (e.g., Ryan Coogler's Sinners, Bong Joon-ho's Mickey 17, or 28 Years Later).
+            -Discovery Balance (Deep-Cut Rule): Maintain a ratio of roughly 70% "Canon" (highly recognizable/popular) and 30% "Cult/Deep Cuts" (thematic cousins that are critically acclaimed but less mainstream) to provide surprise value.
+            -Archetype > Industry: For subculture queries (e.g., "Sigma", "Doomer"), prioritize protagonists with specific psychological traits (stoicism, isolation, obsession) over generic industry settings.
+            Avoid Keyword Traps: Do not match words literally. Do not return every movie with "rain" in the title for a "rainy day" query; return films that feel like a rainy day.
             -Subcultural Literacy: Recognize modern internet aesthetics (Corecore, Synthwave, Dark Academia). Resolve these to the "canon" films of those online communities.
             
-            RANKING GUIDELINES:
-            -Tier 1: Direct hits (the exact director requested or the film the visual symbol refers to).
-            -Tier 2: The "Canon" or "Icons" of the requested vibe/subculture.
-            -Tier 3: Tonal siblings—films that fit the psychological or visual "DNA" of the query.
+            RANKING GUIDELINES (THE 3-ACT STRUCTURE):
+            Rank the 30-film output according to this specific flow to ensure discovery:
+            - ACT I (Titles 1-5): THE DEFINITIVES. Direct hits, the exact director requested, or the "Icons" of the requested subculture.
+            - ACT II (Titles 6-20): THE VIBE-MATCHES. Films that share the same cinematic DNA, psychological profiles, or aesthetic atmosphere.
+            - ACT III (Titles 21-30): THE WILDCARDS. "Deep-cut" thematic cousins that offer a fresh or unexpected perspective while remaining culturally relevant to the query.
 
             OUTPUT DISCIPLINE:
             -Titles must be real, well-known films.
@@ -96,7 +97,19 @@ if __name__ == "__main__":
     layer = TitleGenerationLayer()
     
     # Test
-    query = "films to watch with friends in halloween"
+    query = "Sigma grindset"
+    result = layer.fetch_titles(query)
+    print(f"\nResults for '{query}':")
+    for t in result.titles[:10]:
+        print(f" - {t.title} ({t.year})"),
+
+    query = "neon city loneliness"
+    result = layer.fetch_titles(query)
+    print(f"\nResults for '{query}':")
+    for t in result.titles[:10]:
+        print(f" - {t.title} ({t.year})")
+
+    query = "wong kar wai"
     result = layer.fetch_titles(query)
     print(f"\nResults for '{query}':")
     for t in result.titles[:10]:
