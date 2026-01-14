@@ -59,7 +59,8 @@ export function getGradient(title: string): string {
 }
 
 export const enrichMovieData = (apiMovie: ApiMovie): EnrichedMovie => {
-    const seed = apiMovie.title + apiMovie.movie_id;
+    // Safety check: ensure title/id exist to prevent crashes
+    const seed = (apiMovie.title || 'Unknown') + (apiMovie.movie_id || 0);
     const r = (offset = 0) => pseudoRandom(seed + offset);
 
     const vibeDynamics = {

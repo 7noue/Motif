@@ -1,7 +1,5 @@
-import { 
-    Brain, Zap, Gauge, Users, ShieldCheck, Heart, 
-    Beer, User, Sofa, Moon, Coffee, Cloud, Sparkles 
-} from 'lucide-svelte';
+// src/lib/constants.ts
+import { Brain, Zap, Gauge, Users, ShieldCheck, Heart, Beer, User, Sofa, Moon, Coffee, Cloud, Sparkles } from 'lucide-svelte';
 
 export const API_URL = 'http://localhost:8000/api/search';
 

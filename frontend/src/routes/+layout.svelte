@@ -3,16 +3,18 @@
     import { Home, Compass, User as UserIcon, LogIn, LogOut, Loader2 } from 'lucide-svelte';
     import { page } from '$app/stores';
     import { currentUser, toast } from '$lib/stores';
-    import { fly, fade } from 'svelte/transition';
+    import { fly } from 'svelte/transition';
         
     let { children } = $props();
     
-    let showProfileMenu = false;
-    let isLoggingIn = false;
+    // Svelte 5 State Runes (Required for reactivity)
+    let showProfileMenu = $state(false);
+    let isLoggingIn = $state(false);
 
     function handleLogin() {
         isLoggingIn = true;
         setTimeout(() => {
+            // $currentUser is a store, so auto-subscription ($) works fine
             $currentUser = { name: 'Mark', avatar: null };
             toast.show('Welcome back, Mark.', 'success');
             isLoggingIn = false;
@@ -31,7 +33,6 @@
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 </svelte:head>
 
-<!-- Main background -->
 <div class="fixed inset-0 z-[-2] bg-[#050505] pointer-events-none overflow-hidden">
     <div class="absolute inset-0 opacity-[0.03] mix-blend-overlay grain-texture"></div>
     <div class="absolute top-[-20%] left-[-10%] w-[80vw] h-[80vh] bg-linear-to-br from-indigo-900/20 via-purple-900/10 to-transparent rounded-full blur-[120px] opacity-40 animate-pulse-slow"></div>
@@ -39,14 +40,13 @@
     <div class="absolute inset-0 bg-radial-at-c from-transparent via-[#050505]/50 to-[#050505]/90"></div>
 </div>
 
-<!-- Fallback background -->
 <div class="fixed inset-0 z-[-3] bg-[#050505]"></div>
 
 <div class="fixed top-6 right-6 z-50">
     {#if $currentUser}
         <div class="relative">
             <button 
-                on:click={() => showProfileMenu = !showProfileMenu} 
+                onclick={() => showProfileMenu = !showProfileMenu} 
                 class="flex items-center gap-3 pl-4 pr-1.5 py-1.5 bg-[#0e0e0e]/80 backdrop-blur-xl border border-white/10 rounded-full hover:bg-white/5 hover:border-white/20 transition-all shadow-lg group cursor-pointer"
             >
                 <span class="text-xs font-medium text-neutral-400 group-hover:text-white transition-colors">{$currentUser.name}</span>
@@ -59,7 +59,7 @@
                     class="absolute right-0 mt-2 w-48 bg-[#0e0e0e] border border-white/10 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-xl p-1"
                 >
                     <button 
-                        on:click={handleLogout} 
+                        onclick={handleLogout} 
                         class="w-full text-left px-3 py-2.5 text-xs font-medium text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 rounded-xl flex items-center gap-2 transition-colors cursor-pointer"
                     >
                         <LogOut class="w-3.5 h-3.5" /> Sign Out
@@ -69,7 +69,7 @@
         </div>
     {:else}
         <button 
-            on:click={handleLogin} 
+            onclick={handleLogin} 
             disabled={isLoggingIn}
             class="flex items-center gap-2 px-4 py-2 bg-[#0e0e0e]/50 backdrop-blur-md border border-white/10 text-neutral-400 text-xs font-medium rounded-full hover:bg-white/10 hover:text-white hover:border-white/20 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-wait"
         >
@@ -116,6 +116,8 @@
 </nav>
 
 <style>
+    /* Custom Utilities to support the glass/gradient effect */
+    
     .grain-texture {
         background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
         background-size: 200px 200px;
