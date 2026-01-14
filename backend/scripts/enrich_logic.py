@@ -6,6 +6,9 @@ import requests
 from dotenv import load_dotenv
 import ollama
 from openai import OpenAI
+import logging
+import pandas as pd
+from tqdm import tqdm  # This tracks the process
 
 load_dotenv()
 
@@ -20,6 +23,14 @@ OR_MODEL = "google/gemini-2.0-flash-exp:free"
 DELAY_BETWEEN_CALLS = 0.35  # seconds
 MAX_SIMILAR_FILMS = 5
 DB_PATH = "enriched_movies.db"
+
+# --- LOGGING SETUP ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger("EnrichmentEngine")
 
 # --- SETUP SQLITE DB ---
 conn = sqlite3.connect(DB_PATH)
@@ -59,20 +70,32 @@ conn.commit()
 def fetch_tmdb_details(tmdb_id):
     base_url = "https://api.themoviedb.org/3"
 
+    # 1. Basic Details
     details = requests.get(f"{base_url}/movie/{tmdb_id}", params={"api_key": TMDB_API_KEY, "language": "en-US"}).json()
     time.sleep(DELAY_BETWEEN_CALLS)
 
+    # 2. Credits (Director/Cast)
     credits = requests.get(f"{base_url}/movie/{tmdb_id}/credits", params={"api_key": TMDB_API_KEY}).json()
     time.sleep(DELAY_BETWEEN_CALLS)
 
+    # 3. Release Dates (Certification Fix Applied Here)
     release_resp = requests.get(f"{base_url}/movie/{tmdb_id}/release_dates", params={"api_key": TMDB_API_KEY}).json()
     cert_code = "NR"
+    
+    # Logic: Find US entry, then look for the first non-empty certification
     for entry in release_resp.get("results", []):
-        if entry["iso_3166_1"] == "US" and entry.get("release_dates"):
-            cert_code = entry["release_dates"][0].get("certification", "NR")
-            break
+        if entry["iso_3166_1"] == "US":
+            for date in entry.get("release_dates", []):
+                # We check if the certification string is not empty
+                if date.get("certification"):
+                    cert_code = date["certification"]
+                    break
+            # If we found a cert, stop checking other countries (if any matched US)
+            if cert_code != "NR":
+                break
     time.sleep(DELAY_BETWEEN_CALLS)
 
+    # 4. Watch Providers
     stream_resp = requests.get(f"{base_url}/movie/{tmdb_id}/watch/providers", params={"api_key": TMDB_API_KEY}).json()
     streaming_data = stream_resp.get("results", {}).get("US", {})
     streaming_info = []
@@ -81,6 +104,7 @@ def fetch_tmdb_details(tmdb_id):
             streaming_info.extend([p["provider_name"] for p in streaming_data[key]])
     time.sleep(DELAY_BETWEEN_CALLS)
 
+    # 5. Similar Movies
     similar_resp = requests.get(f"{base_url}/movie/{tmdb_id}/similar", params={"api_key": TMDB_API_KEY, "language": "en-US"}).json()
     similar_movies = [m["title"] for m in similar_resp.get("results", [])[:MAX_SIMILAR_FILMS]]
     time.sleep(DELAY_BETWEEN_CALLS)
@@ -102,13 +126,16 @@ def fetch_tmdb_details(tmdb_id):
     }
 
 def get_trailer_url(tmdb_id):
-    videos = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}/videos", params={"api_key": TMDB_API_KEY}).json().get("results", [])
-    for vid in videos:
-        if vid["site"] == "YouTube" and vid["type"] == "Trailer":
-            return f"https://www.youtube.com/watch?v={vid['key']}"
+    try:
+        videos = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}/videos", params={"api_key": TMDB_API_KEY}).json().get("results", [])
+        for vid in videos:
+            if vid["site"] == "YouTube" and vid["type"] == "Trailer":
+                return f"https://www.youtube.com/watch?v={vid['key']}"
+    except:
+        return None
     return None
 
-# --- AI ENRICHMENT ---
+# --- AI ENRICHMENT (PROMPT UNCHANGED) ---
 def _get_prompt(movie):
     return f"""
 ### SYSTEM ROLE: CULTURAL CURATOR
@@ -149,7 +176,6 @@ def generate_via_ollama(movie):
         )
         return json.loads(response['message']['content'])
     except Exception as e:
-        print(f"⚠️ Ollama fail: {e}")
         return None
 
 def generate_via_openrouter(movie):
@@ -164,7 +190,7 @@ def generate_via_openrouter(movie):
         )
         return json.loads(response.choices[0].message.content)
     except Exception as e:
-        print(f"⚠️ OpenRouter fail: {e}")
+        logger.error(f"⚠️ OpenRouter fail: {e}")
         return None
 
 # --- SAVE TO SQLITE ---
@@ -206,34 +232,76 @@ def save_to_db(movie):
 
 # --- ENRICH AND SAVE ---
 def enrich_and_save(tmdb_id):
-    movie_data = fetch_tmdb_details(tmdb_id)
-    metadata = generate_via_ollama(movie_data) or generate_via_openrouter(movie_data) or {}
-    
-    # Correct vibe %
-    vibe_val = metadata.get("vibe_signature", {}).get("val_percent", 0)
-    metadata["vibe_signature"]["val_percent"] = min(max(vibe_val, 0), 100)
+    try:
+        movie_data = fetch_tmdb_details(tmdb_id)
+        if not movie_data.get("title"):
+            return None
 
-    enriched_movie = {
-        **movie_data,
-        "primary_aesthetic": metadata.get("primary_aesthetic"),
-        "fit_quote": metadata.get("fit_quote"),
-        "social_friction": metadata.get("social_friction"),
-        "focus_load": metadata.get("focus_load"),
-        "tone_label": metadata.get("tone_label"),
-        "emotional_aftertaste": metadata.get("emotional_aftertaste"),
-        "perfect_occasion": metadata.get("perfect_occasion"),
-        "similar_films": metadata.get("similar_films", movie_data.get("similar_films", [])),
-        "vibe_signature": metadata.get("vibe_signature"),
-        "palette_name": metadata.get("palette", {}).get("name"),
-        "palette_colors": metadata.get("palette", {}).get("colors")
-    }
+        # AI Generation Strategy
+        metadata = generate_via_ollama(movie_data)
+        if not metadata:
+            metadata = generate_via_openrouter(movie_data)
+        
+        if not metadata:
+            logger.error(f"ID {tmdb_id}: AI generation failed.")
+            return None
 
-    save_to_db(enriched_movie)
-    return enriched_movie
+        # Data Cleaning
+        vibe_val = metadata.get("vibe_signature", {}).get("val_percent", 0)
+        if metadata.get("vibe_signature"):
+            metadata["vibe_signature"]["val_percent"] = min(max(vibe_val, 0), 100)
+        else:
+             metadata["vibe_signature"] = {"label": "Unknown", "val_percent": 0}
 
-# --- EXAMPLE USAGE ---
+        enriched_movie = {
+            **movie_data,
+            "primary_aesthetic": metadata.get("primary_aesthetic"),
+            "fit_quote": metadata.get("fit_quote"),
+            "social_friction": metadata.get("social_friction"),
+            "focus_load": metadata.get("focus_load"),
+            "tone_label": metadata.get("tone_label"),
+            "emotional_aftertaste": metadata.get("emotional_aftertaste"),
+            "perfect_occasion": metadata.get("perfect_occasion"),
+            "similar_films": metadata.get("similar_films", movie_data.get("similar_films", [])),
+            "vibe_signature": metadata.get("vibe_signature"),
+            "palette": metadata.get("palette", {}),
+            "palette_name": metadata.get("palette", {}).get("name"),
+            "palette_colors": metadata.get("palette", {}).get("colors")
+        }
+
+        save_to_db(enriched_movie)
+        return enriched_movie
+    except Exception as e:
+        logger.error(f"Critical error on ID {tmdb_id}: {e}")
+        return None
+
+# --- MAIN EXECUTION BLOCK ---
 if __name__ == "__main__":
-    tmdb_ids = [603, 550, 680]  # Example TMDB IDs
-    for tid in tmdb_ids:
-        movie = enrich_and_save(tid)
-        print(f"✅ Saved {movie['title']} to DB with checkpoint")
+    input_file = "data/cleaned_movies.csv"
+    
+    if not os.path.exists(input_file):
+        logger.error(f"File not found: {input_file}")
+        exit()
+
+    logger.info("Loading dataset...")
+    df = pd.read_csv(input_file)
+    
+    # 1. Sort and limit (Adjust head() as needed)
+    df = df.sort_values(by='popularity', ascending=False).head(5000).copy()
+    
+    # 2. Filter out already processed IDs
+    existing_ids_query = cursor.execute("SELECT tmdb_id FROM movies").fetchall()
+    existing_ids = set(row[0] for row in existing_ids_query)
+    
+    id_col = 'id' if 'id' in df.columns else 'tmdb_id'
+    all_ids = df[id_col].tolist()
+    ids_to_process = [tid for tid in all_ids if tid not in existing_ids]
+
+    logger.info(f"Total: {len(all_ids)} | Done: {len(existing_ids)} | Queue: {len(ids_to_process)}")
+
+    # 3. Process with Progress Bar (tqdm)
+    for tid in tqdm(ids_to_process, desc="Enriching Movies", unit="film"):
+        enrich_and_save(tid)
+            
+    logger.info("Batch processing complete.")
+    conn.close()
