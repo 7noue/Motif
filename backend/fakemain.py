@@ -1,6 +1,7 @@
 import os
 import json
 import random
+from typing import List, Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -12,10 +13,11 @@ load_dotenv()
 # --- CONFIG ---
 app = FastAPI(title="Motif Prototype API")
 
-# Allow Svelte Frontend to connect
+# --- CORS: CRITICAL FOR SVELTE ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    # Allow specific origin (Svelte default) OR "*" for dev
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,32 +28,29 @@ CLIENT = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
 )
-# Use a fast, free model for the prototype
 MODEL_ID = "xiaomi/mimo-v2-flash:free"
 
 # --- DATA MODELS ---
+
+# 1. Request Model (Matches your Svelte POST body)
+class SearchQuery(BaseModel):
+    query: str
+    top_k: Optional[int] = 9
+
+# 2. Response Item Model
 class MovieCard(BaseModel):
     id: int
     title: str
-    poster_url: str
-    trailer_url: str
-    fit_quote: str       # Placeholder for the "Vibe" text
-    match_score: int     # 0-100
-    aesthetic_label: str # e.g. "NEON NOIR"
-
-class SearchResponse(BaseModel):
-    results: list[MovieCard]
+    poster_url: Optional[str] = None
+    trailer_url: Optional[str] = None
+    fit_quote: str
+    match_score: int
+    aesthetic_label: str
 
 # --- HELPER: MOCK ASSETS ---
 def get_mock_poster(title: str):
-    """Generates a placeholder image with the movie title on it"""
     clean_title = title.replace(" ", "+")
-    # Using Placehold.co for instant, reliable images
     return f"https://placehold.co/500x750/1a1a1a/ffffff?text={clean_title}&font=playfair-display"
-
-def get_mock_trailer():
-    """Generic nature loop or Rick Roll for testing video components"""
-    return "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 def get_mock_quote():
     quotes = [
@@ -67,13 +66,15 @@ def get_mock_quote():
 
 @app.get("/")
 def health_check():
-    return {"status": "Prototype Online", "mode": "Generator + Placeholders"}
+    return {"status": "Prototype Online", "mode": "Generator"}
 
-@app.get("/search", response_model=SearchResponse)
-def search_movies(q: str):
+# CRITICAL CHANGE: response_model is now List[MovieCard]
+# This matches the return value AND what Svelte expects (result.map)
+@app.post("/api/search", response_model=List[MovieCard])
+def search_movies(payload: SearchQuery):
+    q = payload.query
     print(f"🧠 Generating titles for: '{q}'...")
 
-    # 1. Ask AI for Titles Only (Fastest)
     prompt = (
         f"List 8 movie titles that match the vibe: '{q}'. "
         "Return STRICT JSON: {'titles': ['Movie A', 'Movie B']}"
@@ -92,24 +93,26 @@ def search_movies(q: str):
         titles = data.get("titles", [])
     except Exception as e:
         print(f"❌ AI Error: {e}")
-        # Fallback if AI fails (so frontend doesn't break)
-        titles = ["Blade Runner 2049", "The Matrix", "Her", "Ex Machina"]
+        titles = ["Blade Runner 2049", "The Matrix", "Her", "Ex Machina", "Dune", "Arrival"]
 
-    # 2. Wrap in Mock Data
+    # Wrap in Mock Data
     results = []
+    aesthetics = ["CYBERPUNK", "NEON NOIR", "MINIMALIST", "RETRO WAVE", "GRUNGE"]
+    
     for idx, title in enumerate(titles):
         card = MovieCard(
-            id=random.randint(1000, 9999), # Fake ID
+            id=random.randint(1000, 9999),
             title=title,
             poster_url=get_mock_poster(title),
-            trailer_url=get_mock_trailer(),
+            trailer_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             fit_quote=get_mock_quote(),
             match_score=random.randint(85, 99),
-            aesthetic_label="NEON NOIR" # Hardcoded for now, or randomize
+            aesthetic_label=random.choice(aesthetics)
         )
         results.append(card)
 
-    return {"results": results}
+    # DIRECTLY RETURN THE LIST
+    return results
 
 if __name__ == "__main__":
     import uvicorn
