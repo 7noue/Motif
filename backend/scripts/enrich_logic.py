@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import sqlite3
 import requests
 from dotenv import load_dotenv
 import ollama
@@ -18,47 +19,70 @@ OR_MODEL = "google/gemini-2.0-flash-exp:free"
 
 DELAY_BETWEEN_CALLS = 0.35  # seconds
 MAX_SIMILAR_FILMS = 5
+DB_PATH = "enriched_movies.db"
+
+# --- SETUP SQLITE DB ---
+conn = sqlite3.connect(DB_PATH)
+cursor = conn.cursor()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS movies (
+    tmdb_id INTEGER PRIMARY KEY,
+    title TEXT,
+    year INTEGER,
+    overview TEXT,
+    runtime INTEGER,
+    director TEXT,
+    cast TEXT,
+    original_language TEXT,
+    poster_url TEXT,
+    trailer_url TEXT,
+    certification TEXT,
+    streaming_info TEXT,
+    primary_aesthetic TEXT,
+    fit_quote TEXT,
+    social_friction TEXT,
+    focus_load TEXT,
+    tone_label TEXT,
+    emotional_aftertaste TEXT,
+    perfect_occasion TEXT,
+    similar_films TEXT,
+    vibe_signature_label TEXT,
+    vibe_signature_val INTEGER,
+    palette_name TEXT,
+    palette_colors TEXT,
+    checkpointed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+conn.commit()
 
 # --- TMDB HELPERS ---
 def fetch_tmdb_details(tmdb_id):
-    """Fetch movie data, certifications, streaming info, and language."""
     base_url = "https://api.themoviedb.org/3"
 
-    # 1. Movie Details
-    details_resp = requests.get(
-        f"{base_url}/movie/{tmdb_id}",
-        params={"api_key": TMDB_API_KEY, "language": "en-US"}
-    )
-    details = details_resp.json()
+    details = requests.get(f"{base_url}/movie/{tmdb_id}", params={"api_key": TMDB_API_KEY, "language": "en-US"}).json()
     time.sleep(DELAY_BETWEEN_CALLS)
 
-    # 2. Credits
-    credits_resp = requests.get(f"{base_url}/movie/{tmdb_id}/credits", params={"api_key": TMDB_API_KEY})
-    credits = credits_resp.json()
+    credits = requests.get(f"{base_url}/movie/{tmdb_id}/credits", params={"api_key": TMDB_API_KEY}).json()
     time.sleep(DELAY_BETWEEN_CALLS)
 
-    # 3. Certifications
-    release_resp = requests.get(f"{base_url}/movie/{tmdb_id}/release_dates", params={"api_key": TMDB_API_KEY})
-    releases = release_resp.json()
+    release_resp = requests.get(f"{base_url}/movie/{tmdb_id}/release_dates", params={"api_key": TMDB_API_KEY}).json()
     cert_code = "NR"
-    for entry in releases.get("results", []):
-        if entry["iso_3166_1"] == "US" and entry["release_dates"]:
+    for entry in release_resp.get("results", []):
+        if entry["iso_3166_1"] == "US" and entry.get("release_dates"):
             cert_code = entry["release_dates"][0].get("certification", "NR")
             break
     time.sleep(DELAY_BETWEEN_CALLS)
 
-    # 4. Streaming providers
-    stream_resp = requests.get(f"{base_url}/movie/{tmdb_id}/watch/providers", params={"api_key": TMDB_API_KEY})
-    stream_data = stream_resp.json().get("results", {}).get("US", {})
+    stream_resp = requests.get(f"{base_url}/movie/{tmdb_id}/watch/providers", params={"api_key": TMDB_API_KEY}).json()
+    streaming_data = stream_resp.get("results", {}).get("US", {})
     streaming_info = []
     for key in ["flatrate", "rent", "buy"]:
-        if key in stream_data:
-            streaming_info.extend([p["provider_name"] for p in stream_data[key]])
+        if key in streaming_data:
+            streaming_info.extend([p["provider_name"] for p in streaming_data[key]])
     time.sleep(DELAY_BETWEEN_CALLS)
 
-    # 5. Similar films
-    similar_resp = requests.get(f"{base_url}/movie/{tmdb_id}/similar", params={"api_key": TMDB_API_KEY, "language": "en-US"})
-    similar_movies = [m["title"] for m in similar_resp.json().get("results", [])[:MAX_SIMILAR_FILMS]]
+    similar_resp = requests.get(f"{base_url}/movie/{tmdb_id}/similar", params={"api_key": TMDB_API_KEY, "language": "en-US"}).json()
+    similar_movies = [m["title"] for m in similar_resp.get("results", [])[:MAX_SIMILAR_FILMS]]
     time.sleep(DELAY_BETWEEN_CALLS)
 
     return {
@@ -78,9 +102,7 @@ def fetch_tmdb_details(tmdb_id):
     }
 
 def get_trailer_url(tmdb_id):
-    base_url = "https://api.themoviedb.org/3"
-    videos_resp = requests.get(f"{base_url}/movie/{tmdb_id}/videos", params={"api_key": TMDB_API_KEY})
-    videos = videos_resp.json().get("results", [])
+    videos = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}/videos", params={"api_key": TMDB_API_KEY}).json().get("results", [])
     for vid in videos:
         if vid["site"] == "YouTube" and vid["type"] == "Trailer":
             return f"https://www.youtube.com/watch?v={vid['key']}"
@@ -145,18 +167,52 @@ def generate_via_openrouter(movie):
         print(f"⚠️ OpenRouter fail: {e}")
         return None
 
-# --- ENRICH AND RETURN ---
-def enrich_movie(tmdb_id):
+# --- SAVE TO SQLITE ---
+def save_to_db(movie):
+    cursor.execute("""
+    INSERT OR REPLACE INTO movies (
+        tmdb_id,title,year,overview,runtime,director,cast,original_language,poster_url,trailer_url,
+        certification,streaming_info,primary_aesthetic,fit_quote,social_friction,focus_load,tone_label,
+        emotional_aftertaste,perfect_occasion,similar_films,vibe_signature_label,vibe_signature_val,
+        palette_name,palette_colors
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        movie["tmdb_id"],
+        movie["title"],
+        movie["year"],
+        movie["overview"],
+        movie["runtime"],
+        movie["director"],
+        ", ".join(movie["cast"]),
+        movie["original_language"],
+        movie["poster_url"],
+        movie["trailer_url"],
+        movie["certification"],
+        movie["streaming_info"],
+        movie.get("primary_aesthetic"),
+        movie.get("fit_quote"),
+        movie.get("social_friction"),
+        movie.get("focus_load"),
+        movie.get("tone_label"),
+        movie.get("emotional_aftertaste"),
+        movie.get("perfect_occasion"),
+        ", ".join(movie.get("similar_films", [])),
+        movie.get("vibe_signature", {}).get("label"),
+        movie.get("vibe_signature", {}).get("val_percent"),
+        movie.get("palette_name"),
+        ", ".join(movie.get("palette_colors", []))
+    ))
+    conn.commit()
+
+# --- ENRICH AND SAVE ---
+def enrich_and_save(tmdb_id):
     movie_data = fetch_tmdb_details(tmdb_id)
-
-    # AI metadata (try Ollama first, fallback OpenRouter)
     metadata = generate_via_ollama(movie_data) or generate_via_openrouter(movie_data) or {}
-
-    # Vibe signature percent correction
+    
+    # Correct vibe %
     vibe_val = metadata.get("vibe_signature", {}).get("val_percent", 0)
     metadata["vibe_signature"]["val_percent"] = min(max(vibe_val, 0), 100)
 
-    # Combine all enriched data
     enriched_movie = {
         **movie_data,
         "primary_aesthetic": metadata.get("primary_aesthetic"),
@@ -172,11 +228,12 @@ def enrich_movie(tmdb_id):
         "palette_colors": metadata.get("palette", {}).get("colors")
     }
 
+    save_to_db(enriched_movie)
     return enriched_movie
 
-# --- EXAMPLE REAL-TIME USAGE ---
+# --- EXAMPLE USAGE ---
 if __name__ == "__main__":
     tmdb_ids = [603, 550, 680]  # Example TMDB IDs
     for tid in tmdb_ids:
-        movie = enrich_movie(tid)
-        print(json.dumps(movie, indent=2))
+        movie = enrich_and_save(tid)
+        print(f"✅ Saved {movie['title']} to DB with checkpoint")
