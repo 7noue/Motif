@@ -199,7 +199,7 @@
                     <span class="text-[9px] font-bold uppercase tracking-widest text-white/50">{movie.palette.name}</span>
                 </div>
 
-                <div class="grid grid-cols-3 gap-2 py-2 border-b border-white/5">
+                <div class="grid grid-cols-3  py-2 border-b border-white/5">
                     <div class="flex flex-col items-center">
                         <span class="text-[9px] font-bold text-neutral-500 uppercase tracking-widest mb-0.5">Match</span>
                         <span class="text-emerald-400 font-bold text-lg">{Math.round(movie.score * 100)}%</span>
