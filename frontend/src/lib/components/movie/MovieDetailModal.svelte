@@ -272,6 +272,7 @@
                          <p><span class="text-white font-bold uppercase text-[10px] tracking-wider mr-2">Cast</span> 
                              {movie.cast ? movie.cast.slice(0, 4).join(", ") : 'N/A'}
                          </p>
+                          <p><span class="text-white font-bold uppercase text-[10px] tracking-wider mr-2">Genre</span> {movie.original_language ? movie.original_language.toUpperCase() : 'N/A'}</p>
                          <p><span class="text-white font-bold uppercase text-[10px] tracking-wider mr-2">Language</span> {movie.original_language ? movie.original_language.toUpperCase() : 'N/A'}</p>
                      </div>
                 </div>
