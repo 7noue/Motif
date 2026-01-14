@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { API_URL } from './constants';
-import { enrichMovieData, type EnrichedMovie } from './logic';
+import { enrichMovieData, type EnrichedMovie } from '$lib/logic'; // Ensure this points to $lib/logic or ./logic
 
 // --- Types ---
 export interface User {
@@ -27,7 +27,7 @@ export const currentUser = writable<User | null>(null);
 // --- TOAST STORE ---
 function createToastStore() {
     const { subscribe, set } = writable<{ message: string; type: ToastType } | null>(null);
-    let timeout: ReturnType<typeof setTimeout>; // Fix: explicitly typed timeout
+    let timeout: ReturnType<typeof setTimeout>;
 
     return {
         subscribe,
@@ -61,7 +61,6 @@ function createSearchStore() {
         })),
         setQuery: (q: string) => update(s => ({ ...s, query: q })),
         
-        // Fix: 'type' is strictly typed to keys of activeContext
         toggleContext: (type: keyof SearchState['activeContext'], value: string) => update(s => {
             const current = s.activeContext[type];
             return { 
