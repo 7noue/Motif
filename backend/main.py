@@ -4,9 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-
-# Import your Layer 2 logic
-from generator import TitleGenerationLayer, FilmEntry
+from scripts.generator import TitleGenerationLayer, FilmEntry
 
 load_dotenv()
 
@@ -26,12 +24,10 @@ app.add_middleware(
 layer = TitleGenerationLayer()
 
 # --- Pydantic Models ---
-class FilmMatch(FilmEntry):
-    pass
 
 class SearchResponse(BaseModel):
     count: int
-    results: list[FilmMatch]
+    results: list[FilmEntry]
 
 class ContextResponse(BaseModel):
     fit_quote: str
@@ -48,6 +44,7 @@ def search_movies(q: str = Query(..., min_length=2)):
     Returns up to 30 AI-associated films with confidence scores.
     """
     result = layer.fetch_titles(q)
+    results_dicts = [t.model_dump() for t in result.titles]
     return SearchResponse(
         count=len(result.titles),
         results=result.titles

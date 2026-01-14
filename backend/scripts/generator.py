@@ -1,15 +1,26 @@
 import os
 import json
 import hashlib
+import logging  # <--- Added logging import
 from typing import Optional
 from openai import OpenAI
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import json_repair
 
 # Import our Layer 2 logic
 from scripts.gatekeeper import InputIntelligence, QueryIntent
 
 load_dotenv()
+
+# --- LOGGING CONFIGURATION ---
+# This sets up the logger to print nicely formatted messages with timestamps
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger("MotifEngine")
 
 # Force the output into this specific structure
 class FilmEntry(BaseModel):
@@ -23,14 +34,12 @@ class TitleResponse(BaseModel):
 class TitleGenerationLayer:
     def __init__(self, cache_file="query_cache.json"):
         # 1. Single Client: OpenRouter
-        # We drop Gemini/DeepSeek clients to save complexity and cost.
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=os.getenv("OPENROUTER_API_KEY"),
         )
         
         # 2. Model Selection: The "Free" Tier
-        # Using the Xiaomi Mimo or comparable free model on OpenRouter
         self.model_id = "xiaomi/mimo-v2-flash:free" 
         
         # 3. Layer 2 Intel & Cache
@@ -40,7 +49,7 @@ class TitleGenerationLayer:
 
         # 4. LOCKED SYSTEM PROMPT (Do Not Modify)
         self.system_instructions = """
-             You are a film association engine. Your job is to map human intent, mood, subcultural references, visual symbols, or partial information to relevant films with high cultural accuracy and "vibe" alignment.
+            You are a film association engine. Your job is to map human intent, mood, subcultural references, visual symbols, or partial information to relevant films with high cultural accuracy and "vibe" alignment.
 
             You do NOT explain. You do NOT chat. You ONLY return structured film associations.
 
@@ -113,16 +122,17 @@ class TitleGenerationLayer:
         # 1. Intelligence Check
         processed = self.intel.classify_intent(raw_input)
         if processed.intent == QueryIntent.LOW_SIGNAL:
+            logger.warning(f"Low signal query detected: '{raw_input}'")
             return self._get_hard_fallback()
 
-        # 2. Cache Check (Save time/API calls)
+        # 2. Cache Check
         cache_key = self._get_cache_key(processed.normalized_text)
         if cache_key in self.cache:
-            print(f"🚀 Cache Hit: {processed.normalized_text}")
+            logger.info(f"🚀 Cache Hit: '{processed.normalized_text}'")
             return TitleResponse(titles=[FilmEntry(**t) for t in self.cache[cache_key]])
 
         # 3. Generation (OpenRouter ONLY)
-        print(f"📡 Calling OpenRouter ({self.model_id})...")
+        logger.info(f"📡 Calling OpenRouter ({self.model_id}) for query: '{processed.normalized_text}'...")
         try:
             response = self.client.chat.completions.create(
                 model=self.model_id,
@@ -130,29 +140,37 @@ class TitleGenerationLayer:
                     {"role": "system", "content": self.system_instructions + "\nReturn ONLY valid JSON."},
                     {"role": "user", "content": processed.normalized_text},
                 ],
-                # 'json_object' ensures the model tries to output strictly JSON
                 response_format={'type': 'json_object'},
                 temperature=0.3
             )
             
             raw_content = response.choices[0].message.content
-            parsed_response = TitleResponse.model_validate_json(raw_content)
+            
+            # Debug log to see raw output if needed (commented out by default)
+            # logger.debug(f"Raw API Response: {raw_content}")
+
+            # Use json_repair to fix common LLM JSON errors
+            cleaned_data = json_repair.loads(raw_content)
+            
+            # NOTE: Use model_validate (for dicts), NOT model_validate_json
+            parsed_response = TitleResponse.model_validate(cleaned_data)
             
             # Save to cache on success
             self._save_to_cache(cache_key, [t.model_dump() for t in parsed_response.titles])
             
+            logger.info(f"✅ Successfully generated {len(parsed_response.titles)} titles.")
             return parsed_response
 
         except Exception as e:
-            print(f"❌ OpenRouter Error: {e}")
+            logger.error(f"❌ OpenRouter Error: {e}", exc_info=True)
             return self._get_hard_fallback()
 
     def _get_hard_fallback(self) -> TitleResponse:
-        print(">> Triggering Hard Fallback List")
+        logger.warning(">> Triggering Hard Fallback List")
         return TitleResponse(titles=[
-            {"title": "Inception", "year": 2010},
-            {"title": "The Matrix", "year": 1999},
-            {"title": "Blade Runner 2049", "year": 2017}
+            {"title": "Inception", "year": 2010, "confidence_score": 90},
+            {"title": "The Matrix", "year": 1999, "confidence_score": 85},
+            {"title": "Blade Runner 2049", "year": 2017, "confidence_score": 80}
         ])
 
 if __name__ == "__main__":
@@ -162,12 +180,12 @@ if __name__ == "__main__":
     query = "Dead poets society"
     result = layer.fetch_titles(query)
     print(f"\n[Final Results for '{query}']: {len(result.titles)} films found.")
-    for t in result.titles[:10]:
-        print(f" - {t.title} ({t.year}) - ({t.confidence_score})%")
+    for t in result.titles[:5]:
+        print(f" - {t.title} ({t.year}) - ({t.confidence_score}%)")
 
     # Test 2
     query = "Sigma grindset"
     result = layer.fetch_titles(query)
     print(f"\n[Final Results for '{query}']: {len(result.titles)} films found.")
-    for t in result.titles[:10]:
-        print(f" - {t.title} ({t.year}) - ({t.confidence_score})%")
+    for t in result.titles[:5]:
+        print(f" - {t.title} ({t.year}) - ({t.confidence_score}%)")
