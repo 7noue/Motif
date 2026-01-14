@@ -30,7 +30,7 @@
     <div class="absolute inset-0 opacity-[0.015] mix-blend-overlay grain-texture"></div>
 </div>
 
-<main class="w-full min-h-screen text-slate-200 pb-32 relative font-sans antialiased selection:bg-yellow-400/30 selection:text-yellow-200">
+<main class="w-full min-h-screen text-slate-200 pb-32 relative font-sans antialiased selection:bg-white/20 selection:text-white">
     {@render children()}
 </main>
 
@@ -39,7 +39,6 @@
         
         <a href="/" class="group relative px-4 py-3 rounded-xl transition-all duration-300 ease-out flex flex-col items-center gap-1 {$page.url.pathname === '/' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}">
             <Home class="w-5 h-5" />
-            {#if $page.url.pathname === '/'} <span class="absolute -bottom-1 w-1 h-1 rounded-full bg-yellow-400"></span> {/if}
         </a>
 
         <a href="/explore" class="group relative px-4 py-3 rounded-xl transition-all duration-300 ease-out flex flex-col items-center gap-1 {$page.url.pathname === '/explore' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}">
@@ -91,12 +90,6 @@
     /* Smooth scrolling */
     html {
         scroll-behavior: smooth;
-    }
-    
-    /* Selection styling */
-    ::selection {
-        background: rgba(250, 204, 21, 0.3);
-        color: rgb(254, 240, 138);
     }
     
     /* Better contrast for text */
