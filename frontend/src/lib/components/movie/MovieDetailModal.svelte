@@ -57,8 +57,8 @@
         // Check against real user data from Firebase
         if ($currentUser) {
             // Check if ID exists in the user's arrays (convert to string for safety)
-            isHearted = $currentUser.hearts.includes(String(movie.movie_id));
-            isBookmarked = $currentUser.watchlist.includes(String(movie.movie_id));
+            isHearted = $currentUser.hearts.some(m => String(m.id) === String(movie.movie_id));
+            isBookmarked = $currentUser.watchlist.some(m => String(m.id) === String(movie.movie_id));
         } else {
             isHearted = false;
             isBookmarked = false;
@@ -92,28 +92,30 @@
         if (!requireAuth()) return;
 
         const listName = type === 'heart' ? 'hearts' : 'watchlist';
-        
-        // Determine intended new state
         const isAdding = type === 'heart' ? !isHearted : !isBookmarked;
 
-        // 1. Optimistic UI Update (Instant)
         if (type === 'heart') isHearted = isAdding;
         if (type === 'bookmark') isBookmarked = isAdding;
 
-        // 2. Send to Firebase (Background)
+        // Construct the mini movie object for the store
+        const movieMin = {
+            id: String(movie.movie_id),
+            title: movie.title,
+            year: movie.year
+        };
+
         try {
             await toggleInteraction($currentUser!.uid, movie, listName, isAdding);
             
-            // 3. Update Local Store
-            currentUser.updateLocalLists(listName, String(movie.movie_id), isAdding);
+            // FIX: Pass the full object, not just ID
+            currentUser.updateLocalLists(listName, movieMin, isAdding);
             
-            toast.show(isAdding ? (type === 'heart' ? "Added to Hearts" : "Added to Watchlist") : "Removed", "success");
+            toast.show(isAdding ? "Saved." : "Removed.", "success");
         } catch (err) {
-            console.error(err);
-            // Revert UI if error
+            // Revert on failure
             if (type === 'heart') isHearted = !isAdding;
             if (type === 'bookmark') isBookmarked = !isAdding;
-            toast.show("Failed to save. Check connection.", "error");
+            toast.show("Sync failed.", "error");
         }
     };
 

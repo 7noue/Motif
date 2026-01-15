@@ -5,14 +5,21 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { API_URL } from './constants';
 import { enrichMovieData, type EnrichedMovie } from '$lib/logic';
 
-// --- Types ---
+// --- UPDATED TYPES ---
+export interface SavedMovie {
+    id: string;
+    title: string;
+    year: string | number;
+    posterUrl?: string | null; // Optional: We might re-add this later
+}
+
 export interface User {
     uid: string;
     name: string;
     email: string | null;
     avatar: string | null;
-    watchlist: string[]; 
-    hearts: string[];    
+    watchlist: SavedMovie[]; // Now holds objects, not just strings
+    hearts: SavedMovie[];    
 }
 
 export interface SearchState {
@@ -60,36 +67,33 @@ function createAuthStore() {
             
             onAuthStateChanged(auth, async (firebaseUser) => {
                 if (firebaseUser) {
-                    // 1. FAST UPDATE: Set UI immediately (Optimistic)
-                    // The user sees they are logged in instantly.
                     const userData: User = {
                         uid: firebaseUser.uid,
                         name: firebaseUser.displayName || 'Curator',
                         email: firebaseUser.email,
                         avatar: firebaseUser.photoURL,
-                        watchlist: [], // Empty for now
-                        hearts: []     // Empty for now
+                        watchlist: [],
+                        hearts: []
                     };
                     set(userData); 
 
-                    // 2. BACKGROUND UPDATE: Fetch Database Data
+                    // FETCH DATA
                     try {
                         const userRef = doc(db, 'users', firebaseUser.uid);
                         const userSnap = await getDoc(userRef);
 
                         if (userSnap.exists()) {
                             const data = userSnap.data();
-                            // Update the existing store with the data when it arrives
+                            // Update with full objects from DB
                             update(u => {
                                 if (!u) return null;
                                 return {
                                     ...u,
-                                    watchlist: data.watchlist?.map((m: any) => String(m.id)) || [],
-                                    hearts: data.hearts?.map((m: any) => String(m.id)) || []
+                                    watchlist: data.watchlist || [],
+                                    hearts: data.hearts || []
                                 };
                             });
                         } else {
-                            // Create profile silently
                             await setDoc(userRef, {
                                 name: userData.name,
                                 email: userData.email,
@@ -99,7 +103,7 @@ function createAuthStore() {
                             });
                         }
                     } catch (e) {
-                        console.error("Background sync error:", e);
+                        console.error("Sync error:", e);
                     }
                 } else {
                     set(null);
@@ -109,11 +113,10 @@ function createAuthStore() {
         login: async () => {
             try {
                 await signInWithPopup(auth, googleProvider);
-                // Success toast handled by listener or UI
             } catch (err: any) {
                 console.error("Login failed", err);
                 toast.show(err.message, "error");
-                throw err; // Re-throw so the modal knows to stop loading
+                throw err;
             }
         },
         logout: async () => {
@@ -121,11 +124,20 @@ function createAuthStore() {
             set(null);
             toast.show("Logged out.", "success");
         },
-        updateLocalLists: (type: 'hearts' | 'watchlist', movieId: string, isAdding: boolean) => {
+        // OPTIMISTIC UPDATE HELPER
+        updateLocalLists: (type: 'hearts' | 'watchlist', movie: SavedMovie, isAdding: boolean) => {
             update(u => {
                 if (!u) return null;
                 const list = u[type];
-                const newList = isAdding ? [...list, movieId] : list.filter(id => id !== movieId);
+                // Check by ID to prevent duplicates
+                const exists = list.some(m => String(m.id) === String(movie.id));
+                
+                let newList;
+                if (isAdding) {
+                    newList = exists ? list : [...list, movie];
+                } else {
+                    newList = list.filter(m => String(m.id) !== String(movie.id));
+                }
                 return { ...u, [type]: newList };
             });
         }
@@ -133,32 +145,23 @@ function createAuthStore() {
 }
 export const currentUser = createAuthStore();
 
+// --- SEARCH STORE (Unchanged) ---
 function createSearchStore() {
     const { subscribe, set, update } = writable<SearchState>({
-        query: '',
-        movies: [],
-        isLoading: false,
-        hasSearched: false,
-        activeContext: { social: null, mood: null },
-        error: null,
-        selectedMovie: null
+        query: '', movies: [], isLoading: false, hasSearched: false,
+        activeContext: { social: null, mood: null }, error: null, selectedMovie: null
     });
 
     return {
         subscribe,
-        reset: () => update(s => ({ 
-            ...s, query: '', movies: [], hasSearched: false, 
-            activeContext: { social: null, mood: null }, error: null, selectedMovie: null 
-        })),
+        reset: () => update(s => ({ ...s, query: '', movies: [], hasSearched: false, activeContext: { social: null, mood: null }, error: null, selectedMovie: null })),
         setQuery: (q: string) => update(s => ({ ...s, query: q })),
         selectMovie: (movie: EnrichedMovie) => update(s => ({ ...s, selectedMovie: movie })),
         closeModal: () => update(s => ({ ...s, selectedMovie: null })),
-        
         toggleContext: (type: keyof SearchState['activeContext'], value: string) => update(s => {
             const current = s.activeContext[type];
             return { ...s, activeContext: { ...s.activeContext, [type]: current === value ? null : value } };
         }),
-
         performSearch: async (queryOverride: string | null = null) => {
             const currentState = get(searchStore);
             const queryToUse = queryOverride || currentState.query.trim();
