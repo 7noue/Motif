@@ -141,17 +141,21 @@
   tabindex="0"
   role="button"
   aria-label="Close modal"
+  style="backface-visibility: hidden;"
 >
     
     <div 
         onclick={(e) => e.stopPropagation()} 
         onkeydown={(e) => e.stopPropagation()}
-        class="relative w-full max-w-4xl h-[90vh] bg-[#0e0e0e] border border-white/10 rounded-[24px] shadow-2xl overflow-hidden flex flex-col md:flex-row will-change-transform"
+        role="document"
+        tabindex="-1"
+        class="relative w-full max-w-4xl h-[90vh] bg-[#0e0e0e] border border-white/10 rounded-[24px] overflow-hidden flex flex-col md:flex-row will-change-contents"
+        style="contain: paint layout;"
     >
         
         <button 
             onclick={close}
-            class="absolute top-4 right-4 z-50 p-2 bg-black/60 rounded-full text-white/70 hover:text-white border border-white/10 hover:bg-white/10 transition-colors cursor-pointer"
+            class="absolute top-4 right-4 z-50 p-2 bg-black/80 rounded-full text-white/70 hover:text-white border border-white/10 hover:bg-white/10 transition-colors cursor-pointer"
         >
             <X class="w-4 h-4"/>
         </button>
@@ -165,15 +169,13 @@
                         alt={movie.title} 
                         class="w-full h-full object-cover" 
                         loading="eager"
-                        fetchpriority="high"
                         decoding="async"
                     />
                 {:else}
                      <div class="w-full h-full bg-neutral-900 flex items-center justify-center text-neutral-700">No Image</div>
                 {/if}
                 
-                <div class="absolute inset-0 bg-linear-to-t from-[#0e0e0e] via-[#0e0e0e]/40 to-transparent opacity-90"></div>
-                <div class="absolute inset-0 bg-linear-to-r from-black/50 to-transparent"></div>
+                <div class="absolute inset-0 bg-gradient-to-t from-[#0e0e0e] via-transparent to-transparent opacity-90"></div>
                 
                 <div class="absolute bottom-0 left-0 w-full p-5 z-20">
                     <h2 class="text-3xl font-bold text-white tracking-tighter leading-none mb-2">
@@ -340,7 +342,7 @@
                         {#each mockRecommendations as rec}
                             <div class="cursor-pointer flex flex-col items-center group">
                                 <div class="relative w-full aspect-[3/4] rounded-lg overflow-hidden mb-1.5 bg-neutral-900 border border-white/5">
-                                    <div class="absolute inset-0 bg-linear-to-br {rec.gradient} opacity-60 group-hover:opacity-80 transition-opacity"></div>
+                                    <div class="absolute inset-0 bg-gradient-to-br {rec.gradient} opacity-60 group-hover:opacity-80 transition-opacity"></div>
                                     <div class="absolute bottom-1 left-1 right-1">
                                         <span class="text-[8px] font-bold text-white/90 bg-black/60 px-1.5 py-0.5 rounded truncate block text-center">
                                             {rec.title}
@@ -369,14 +371,14 @@
                 
                 <button 
                     onclick={() => toggleInteraction('heart')} 
-                    class="w-12 h-12 rounded-xl border border-white/10 bg-white/5 text-neutral-300 flex items-center justify-center cursor-pointer transition-all {isHearted ? 'text-rose-400 border-rose-500/30 bg-rose-500/10' : 'hover:bg-white/10'}"
+                    class="w-12 h-12 rounded-xl border border-white/10 bg-white/5 text-neutral-300 flex items-center justify-center cursor-pointer transition-colors {isHearted ? 'text-rose-400 border-rose-500/30 bg-rose-500/10' : 'hover:bg-white/10'}"
                 >
                     <Heart class="w-5 h-5 {isHearted ? 'fill-current' : ''}" />
                 </button>
 
                 <button 
                     onclick={() => toggleInteraction('bookmark')} 
-                    class="w-12 h-12 rounded-xl border border-white/10 bg-white/5 text-neutral-300 flex items-center justify-center cursor-pointer transition-all {isBookmarked ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'hover:bg-white/10'}"
+                    class="w-12 h-12 rounded-xl border border-white/10 bg-white/5 text-neutral-300 flex items-center justify-center cursor-pointer transition-colors {isBookmarked ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'hover:bg-white/10'}"
                 >
                     <Bookmark class="w-5 h-5 {isBookmarked ? 'fill-current' : ''}" />
                 </button>

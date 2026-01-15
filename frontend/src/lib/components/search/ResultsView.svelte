@@ -1,6 +1,6 @@
 <script lang="ts">
     import { Film, Search, ArrowRight, Star } from 'lucide-svelte';
-    import { fly } from 'svelte/transition';
+    // REMOVED: import { fly } from 'svelte/transition'; <- This was killing your CPU
     import { createEventDispatcher } from 'svelte';
     import { searchStore } from '../../stores';
     import { CONTEXT_OPTIONS, VIBES } from '../../constants';
@@ -8,15 +8,19 @@
 
     const dispatch = createEventDispatcher<{ select: EnrichedMovie }>();
 
-    // Subscribe to searchStore
     $: ({ query, movies, isLoading, activeContext } = $searchStore);
 
     function onSelect(movie: EnrichedMovie) { 
         dispatch('select', movie); 
     }
 
+    // Optimization: Local state for input to prevent store thrashing on every keystroke
+    let localQuery = '';
+    $: localQuery = query;
+
     function handleInput(e: Event) {
         const target = e.currentTarget as HTMLInputElement;
+        localQuery = target.value;
         searchStore.setQuery(target.value);
     }
 </script>
@@ -24,8 +28,7 @@
 <div class="relative z-10 w-full max-w-7xl mx-auto px-6 flex flex-col items-center pt-10 justify-start">
     
     <div class="w-full flex flex-col md:flex-row items-center justify-between gap-6 mb-8">
-        
-        <button on:click={searchStore.reset} class="flex items-center gap-3 group transition-all duration-300 cursor-pointer outline-none">
+        <button on:click={searchStore.reset} class="flex items-center gap-3 group transition-opacity duration-300 cursor-pointer outline-none hover:opacity-80">
             <div class="flex items-center justify-center w-10 h-10 bg-[#0e0e0e] border border-white/10 rounded-xl shadow-lg">
                 <Film class="text-white w-5 h-5" />
             </div>
@@ -35,7 +38,7 @@
         <div class="flex flex-wrap justify-center md:justify-end gap-2 {isLoading ? 'opacity-50' : 'opacity-100'}">
             <div class="flex bg-[#0e0e0e] p-1 rounded-full border border-white/10">
                 {#each CONTEXT_OPTIONS.social as opt}
-                    <button on:click={() => searchStore.toggleContext('social', opt.id)} class="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all cursor-pointer {activeContext.social === opt.id ? 'bg-indigo-500 text-white shadow-lg' : 'text-neutral-500 hover:text-white hover:bg-white/5'}">
+                    <button on:click={() => searchStore.toggleContext('social', opt.id)} class="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer {activeContext.social === opt.id ? 'bg-indigo-500 text-white' : 'text-neutral-500 hover:text-white hover:bg-white/5'}">
                         <svelte:component this={opt.icon} class="w-3 h-3" /> {opt.label}
                     </button>
                 {/each}
@@ -44,19 +47,18 @@
     </div>
 
     <div class="w-full max-w-3xl relative z-20 flex flex-col gap-6 mb-12">
-        
         <form on:submit|preventDefault={() => searchStore.performSearch()} class="w-full relative group z-20">
-            <div class="relative flex items-center p-2 bg-[#0e0e0e] border border-white/10 hover:border-white/20 focus-within:border-white/30 rounded-2xl transition-all duration-200 shadow-2xl">
+            <div class="relative flex items-center p-2 bg-[#0e0e0e] border border-white/10 hover:border-white/20 focus-within:border-white/30 rounded-2xl transition-colors duration-200">
                 <Search class="w-5 h-5 text-neutral-500 group-focus-within:text-indigo-400 ml-4 transition-colors duration-200" />
                 <input 
                     type="text" 
-                    value={query} 
+                    value={localQuery} 
                     on:input={handleInput} 
                     class="w-full h-12 bg-transparent text-white outline-none px-4 placeholder-neutral-600 font-light text-base" 
                     placeholder="Search for a vibe..."
                     disabled={isLoading} 
                 />
-                <button type="submit" disabled={isLoading} class="flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition-all cursor-pointer">
+                <button type="submit" disabled={isLoading} class="flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition-colors cursor-pointer">
                     <ArrowRight class="w-5 h-5" />
                 </button>
             </div>
@@ -64,7 +66,7 @@
 
         <div class="flex flex-wrap justify-center gap-2 {isLoading ? 'opacity-50 pointer-events-none' : 'opacity-100'}">
             {#each VIBES as vibe}
-                <button on:click={() => searchStore.performSearch(vibe.label)} class="flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium transition-all active:scale-95 select-none cursor-pointer bg-[#141414] border-white/5 text-neutral-400 hover:border-neutral-700 hover:text-neutral-300">
+                <button on:click={() => searchStore.performSearch(vibe.label)} class="flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium transition-transform active:scale-95 select-none cursor-pointer bg-[#141414] border-white/5 text-neutral-400 hover:border-neutral-700 hover:text-neutral-300">
                     <svelte:component this={vibe.icon} class="w-3 h-3" /> {vibe.label}
                 </button>
             {/each}
@@ -72,16 +74,20 @@
     </div>
 
     <div class="w-full pb-32">
-        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" style="content-visibility: auto; contain-intrinsic-size: 1px 400px;">
             {#if isLoading}
                 {#each Array(6) as _} <div class="h-64 rounded-3xl bg-[#0e0e0e] border border-white/5 animate-pulse"></div> {/each}
             {:else}
                 {#each movies as movie, i (movie.movie_id || i)}
-                    <button on:click={() => onSelect(movie)} in:fly={{ y: 20, duration: 300, delay: i * 50 }} class="group relative w-full flex flex-col h-full bg-[#0e0e0e] border border-white/10 rounded-3xl overflow-hidden hover:-translate-y-1 hover:shadow-2xl hover:border-white/20 text-left transition-all duration-300 cursor-pointer">
+                    <button 
+                        on:click={() => onSelect(movie)} 
+                        class="group relative w-full flex flex-col h-full bg-[#0e0e0e] border border-white/10 rounded-3xl overflow-hidden hover:border-white/30 text-left transition-colors duration-200 cursor-pointer animate-enter transform-gpu"
+                        style="animation-delay: {i < 10 ? i * 50 : 0}ms"
+                    >
                         <div class="h-40 w-full relative overflow-hidden shrink-0">
-                            <div class="absolute inset-0 bg-linear-to-br {getGradient(movie.title)} opacity-30 group-hover:opacity-50 transition-opacity duration-500"></div>
+                            <div class="absolute inset-0 bg-gradient-to-br {getGradient(movie.title)} opacity-30 group-hover:opacity-50 transition-opacity"></div>
                             
-                            <div class="absolute top-3 right-3 flex items-center gap-1.5 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/5 shadow-lg">
+                            <div class="absolute top-3 right-3 flex items-center gap-1.5 bg-black/80 px-2.5 py-1 rounded-lg border border-white/5">
                                 <Star class="w-3 h-3 text-indigo-400 fill-indigo-400" />
                                 <span class="text-xs font-bold text-white">{Math.round(movie.score * 100)}%</span>
                             </div>
@@ -103,3 +109,22 @@
         </section>
     </div>
 </div>
+
+<style>
+    /* CSS Animation runs on the Compositor thread (GPU) unlike Svelte Fly (CPU) */
+    @keyframes enter {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .animate-enter {
+        animation: enter 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        opacity: 0; /* Start hidden */
+    }
+</style>
