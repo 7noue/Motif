@@ -66,64 +66,91 @@ CREATE TABLE IF NOT EXISTS movies (
 """)
 conn.commit()
 
-# --- TMDB HELPERS ---
+# --- TMDB HELPERS (OPTIMIZED) ---
 def fetch_tmdb_details(tmdb_id):
     base_url = "https://api.themoviedb.org/3"
-
-    # 1. Basic Details
-    details = requests.get(f"{base_url}/movie/{tmdb_id}", params={"api_key": TMDB_API_KEY, "language": "en-US"}).json()
-    time.sleep(DELAY_BETWEEN_CALLS)
-
-    # 2. Credits (Director/Cast)
-    credits = requests.get(f"{base_url}/movie/{tmdb_id}/credits", params={"api_key": TMDB_API_KEY}).json()
-    time.sleep(DELAY_BETWEEN_CALLS)
-
-    # 3. Release Dates (Certification Fix Applied Here)
-    release_resp = requests.get(f"{base_url}/movie/{tmdb_id}/release_dates", params={"api_key": TMDB_API_KEY}).json()
-    cert_code = "NR"
     
-    # Logic: Find US entry, then look for the first non-empty certification
-    for entry in release_resp.get("results", []):
-        if entry["iso_3166_1"] == "US":
-            for date in entry.get("release_dates", []):
-                # We check if the certification string is not empty
-                if date.get("certification"):
-                    cert_code = date["certification"]
-                    break
-            # If we found a cert, stop checking other countries (if any matched US)
-            if cert_code != "NR":
-                break
-    time.sleep(DELAY_BETWEEN_CALLS)
-
-    # 4. Watch Providers
-    stream_resp = requests.get(f"{base_url}/movie/{tmdb_id}/watch/providers", params={"api_key": TMDB_API_KEY}).json()
-    streaming_data = stream_resp.get("results", {}).get("US", {})
-    streaming_info = []
-    for key in ["flatrate", "rent", "buy"]:
-        if key in streaming_data:
-            streaming_info.extend([p["provider_name"] for p in streaming_data[key]])
-    time.sleep(DELAY_BETWEEN_CALLS)
-
-    # 5. Similar Movies
-    similar_resp = requests.get(f"{base_url}/movie/{tmdb_id}/similar", params={"api_key": TMDB_API_KEY, "language": "en-US"}).json()
-    similar_movies = [m["title"] for m in similar_resp.get("results", [])[:MAX_SIMILAR_FILMS]]
-    time.sleep(DELAY_BETWEEN_CALLS)
-
-    return {
-        "tmdb_id": tmdb_id,
-        "title": details.get("title"),
-        "year": int(details.get("release_date", "0000")[:4]),
-        "overview": details.get("overview"),
-        "runtime": details.get("runtime"),
-        "director": next((c["name"] for c in credits.get("crew", []) if c["job"] == "Director"), "Unknown"),
-        "cast": [c["name"] for c in credits.get("cast", [])[:5]],
-        "original_language": details.get("original_language"),
-        "poster_url": f"https://image.tmdb.org/t/p/w500{details.get('poster_path')}" if details.get("poster_path") else None,
-        "trailer_url": get_trailer_url(tmdb_id),
-        "certification": cert_code,
-        "streaming_info": ", ".join(streaming_info) if streaming_info else None,
-        "similar_films": similar_movies
+    # OPTIMIZATION: Request everything in ONE call
+    # We append: credits, release_dates, watch/providers, similar, and videos
+    params = {
+        "api_key": TMDB_API_KEY,
+        "language": "en-US",
+        "append_to_response": "credits,release_dates,watch/providers,similar,videos"
     }
+    
+    try:
+        response = requests.get(f"{base_url}/movie/{tmdb_id}", params=params)
+        
+        # Handle cases where the movie ID might not exist or API fails
+        if response.status_code != 200:
+            logger.warning(f"Skipping ID {tmdb_id}: TMDB returned {response.status_code}")
+            return {}
+            
+        data = response.json()
+        
+        # 1. Parsing Credits (Director/Cast)
+        director = "Unknown"
+        cast = []
+        if "credits" in data:
+            director = next((c["name"] for c in data["credits"].get("crew", []) if c["job"] == "Director"), "Unknown")
+            cast = [c["name"] for c in data["credits"].get("cast", [])[:5]]
+
+        # 2. Parsing Release Dates (Certification)
+        cert_code = "NR"
+        if "release_dates" in data:
+            for entry in data["release_dates"].get("results", []):
+                if entry["iso_3166_1"] == "US":
+                    for date in entry.get("release_dates", []):
+                        if date.get("certification"):
+                            cert_code = date["certification"]
+                            break
+                    if cert_code != "NR": break
+
+        # 3. Parsing Watch Providers
+        streaming_info = []
+        if "watch/providers" in data:
+            providers = data["watch/providers"].get("results", {}).get("US", {})
+            for key in ["flatrate", "rent", "buy"]:
+                if key in providers:
+                    streaming_info.extend([p["provider_name"] for p in providers[key]])
+        # Deduplicate list
+        streaming_info = list(set(streaming_info))
+
+        # 4. Parsing Similar Films
+        similar_movies = []
+        if "similar" in data:
+            similar_movies = [m["title"] for m in data["similar"].get("results", [])[:MAX_SIMILAR_FILMS]]
+
+        # 5. Parsing Trailer (replaces get_trailer_url function)
+        trailer_url = None
+        if "videos" in data:
+            for vid in data["videos"].get("results", []):
+                if vid["site"] == "YouTube" and vid["type"] == "Trailer":
+                    trailer_url = f"https://www.youtube.com/watch?v={vid['key']}"
+                    break
+
+        # Only sleep ONCE per movie now (instead of 6 times)
+        time.sleep(DELAY_BETWEEN_CALLS) 
+
+        # RETURN IDENTICAL STRUCTURE TO PRESERVE DB COMPATIBILITY
+        return {
+            "tmdb_id": tmdb_id,
+            "title": data.get("title"),
+            "year": int(data.get("release_date", "0000")[:4]) if data.get("release_date") else 0,
+            "overview": data.get("overview"),
+            "runtime": data.get("runtime"),
+            "director": director,
+            "cast": cast,
+            "original_language": data.get("original_language"),
+            "poster_url": f"https://image.tmdb.org/t/p/w500{data.get('poster_path')}" if data.get("poster_path") else None,
+            "trailer_url": trailer_url,
+            "certification": cert_code,
+            "streaming_info": ", ".join(streaming_info) if streaming_info else None,
+            "similar_films": similar_movies
+        }
+    except Exception as e:
+        logger.error(f"Error fetching ID {tmdb_id}: {e}")
+        return {}
 
 def get_trailer_url(tmdb_id):
     try:
@@ -277,7 +304,7 @@ def enrich_and_save(tmdb_id):
 
 # --- MAIN EXECUTION BLOCK ---
 if __name__ == "__main__":
-    input_file = "data/cleaned_movies.csv"
+    input_file = "backend/data/cleaned_movies.csv"
     
     if not os.path.exists(input_file):
         logger.error(f"File not found: {input_file}")
