@@ -10,9 +10,9 @@ const firebaseConfig = {
   projectId: "motif-914e4",
   storageBucket: "motif-914e4.firebasestorage.app",
   messagingSenderId: "676694689205",
-  appId: "1:676694689205:web:6dedbf9c7d1cbba9dd85fc",
-  measurementId: "G-LZ62F7HDHQ"
-}
+  appId: "1:676694689205:web:cf92e0aca131b8b5dd85fc",
+  measurementId: "G-ERTH4JCW85"
+};
 
 // 1. Initialize Firebase (Singleton Pattern)
 // This prevents "Firebase App already exists" errors during hot reload
