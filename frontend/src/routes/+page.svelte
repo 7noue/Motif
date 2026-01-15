@@ -6,7 +6,6 @@
     import LandingPage from '$lib/components/landing/LandingPage.svelte';
     import ResultsView from '$lib/components/search/ResultsView.svelte';
     import MovieDetailModal from '$lib/components/movie/MovieDetailModal.svelte';
-    import './layout.css'
     // Stores & Types
     import { toast, searchStore } from '$lib/stores';
     import type { EnrichedMovie } from '$lib/logic';

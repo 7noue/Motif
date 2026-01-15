@@ -3,6 +3,7 @@
     import { createEventDispatcher } from 'svelte';
     import { currentUser, toast } from '$lib/stores';
     import type { EnrichedMovie } from '$lib/logic';
+    import { toggleInteraction, submitTag } from '$lib/db'; // Firebase functions
 
     let { movie } = $props<{ movie: EnrichedMovie }>();
     
@@ -17,6 +18,7 @@
         isCustom: boolean;
     }
 
+    // --- STATE ---
     let isHearted = $state(false);
     let isBookmarked = $state(false);
     
@@ -44,12 +46,22 @@
         { title: "Collateral", year: 2004, match: 79, gradient: "from-purple-500 to-violet-900" }
     ];
 
+    // --- REAL DATA SYNC ---
     $effect(() => {
+        // Reset local state when movie changes
         tags = [...(movie.initialTags || [])];
-        isHearted = false;
-        isBookmarked = false;
         customTagsAdded = 0;
         userTagVotes = 0;
+
+        // Check against real user data from Firebase
+        if ($currentUser) {
+            // Check if ID exists in the user's arrays (convert to string for safety)
+            isHearted = $currentUser.hearts.some(id => String(id) === String(movie.movie_id));
+            isBookmarked = $currentUser.watchlist.some(id => String(id) === String(movie.movie_id));
+        } else {
+            isHearted = false;
+            isBookmarked = false;
+        }
     });
 
     function focusOnMount(node: HTMLInputElement) {
@@ -68,13 +80,39 @@
         return true;
     }
 
-    const toggleInteraction = (type: 'heart' | 'bookmark') => {
+    // --- FIREBASE INTERACTIONS ---
+
+    const handleToggle = async (type: 'heart' | 'bookmark') => {
         if (!requireAuth()) return;
-        if (type === 'heart') isHearted = !isHearted;
-        if (type === 'bookmark') isBookmarked = !isBookmarked;
+
+        const listName = type === 'heart' ? 'hearts' : 'watchlist';
+        
+        // Determine intended new state
+        const isAdding = type === 'heart' ? !isHearted : !isBookmarked;
+
+        // 1. Optimistic UI Update (Instant)
+        if (type === 'heart') isHearted = isAdding;
+        if (type === 'bookmark') isBookmarked = isAdding;
+
+        // 2. Send to Firebase (Background)
+        try {
+            await toggleInteraction($currentUser!.uid, movie, listName, isAdding);
+            
+            // 3. Update Local Store (So Profile page updates instantly)
+            currentUser.updateLocalLists(listName, String(movie.movie_id), isAdding);
+            
+            toast.show(isAdding ? (type === 'heart' ? "Added to Hearts" : "Added to Watchlist") : "Removed", "success");
+        } catch (err) {
+            console.error(err);
+            // Revert UI if error
+            if (type === 'heart') isHearted = !isAdding;
+            if (type === 'bookmark') isBookmarked = !isAdding;
+            toast.show("Failed to save. Check connection.", "error");
+        }
     };
 
     const voteTag = (index: number) => {
+        // Local voting logic (Gamification)
         if (!requireAuth()) return;
         const tag = tags[index];
         if (tag.userVoted) {
@@ -96,10 +134,11 @@
         }
     };
 
-    const addNewTag = () => {
+    const addNewTag = async () => {
         if (!requireAuth()) return;
         const cleanTag = newTagValue.trim();
         if (!cleanTag) return;
+        
         if (userTagVotes >= MAX_VOTES) { 
             toast.show("Limit 3 votes per movie.", "error"); 
             return; 
@@ -121,12 +160,23 @@
             return;
         }
         
+        // 1. Optimistic Update
         const newTag: Tag = { name: cleanTag, score: 1, userVoted: true, isCustom: true };
         tags.push(newTag);
         customTagsAdded++;
         userTagVotes++;
         newTagValue = ''; 
         showAddTagInput = false;
+
+        // 2. Firebase Submission
+        try {
+            await submitTag($currentUser!.uid, movie.movie_id, cleanTag);
+            toast.show("Tag contributed to ecosystem.", "success");
+        } catch (err) {
+            console.error(err);
+            toast.show("Failed to sync tag.", "error");
+            // Ideally revert here, but for tags we often let it slide in UI
+        }
     };
 
     const handleBackdropKeydown = (e: KeyboardEvent) => {
@@ -370,14 +420,14 @@
                 </a>
                 
                 <button 
-                    onclick={() => toggleInteraction('heart')} 
+                    onclick={() => handleToggle('heart')} 
                     class="w-12 h-12 rounded-xl border border-white/10 bg-white/5 text-neutral-300 flex items-center justify-center cursor-pointer transition-colors {isHearted ? 'text-rose-400 border-rose-500/30 bg-rose-500/10' : 'hover:bg-white/10'}"
                 >
                     <Heart class="w-5 h-5 {isHearted ? 'fill-current' : ''}" />
                 </button>
 
                 <button 
-                    onclick={() => toggleInteraction('bookmark')} 
+                    onclick={() => handleToggle('bookmark')} 
                     class="w-12 h-12 rounded-xl border border-white/10 bg-white/5 text-neutral-300 flex items-center justify-center cursor-pointer transition-colors {isBookmarked ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'hover:bg-white/10'}"
                 >
                     <Bookmark class="w-5 h-5 {isBookmarked ? 'fill-current' : ''}" />

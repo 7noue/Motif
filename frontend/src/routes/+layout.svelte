@@ -1,27 +1,32 @@
 <script lang="ts">
+    import { onMount } from 'svelte';
     import favicon from '$lib/assets/favicon.svg';
     import { Home, Compass, User as UserIcon, LogIn, LogOut, Loader2 } from 'lucide-svelte';
     import { page } from '$app/stores';
-    import { currentUser, toast } from '$lib/stores';
-    import { fly } from 'svelte/transition';
+    import { currentUser, toast, searchStore } from '$lib/stores'; // 2. Stores
+    import { fly, fade } from 'svelte/transition';
+    import MovieDetailModal from '$lib/components/movie/MovieDetailModal.svelte'; // 3. Modal
+    import './layout.css'
+    
+    // Initialize Auth Listener
+    onMount(() => {
+        currentUser.init();
+    });
+
     let { children } = $props();
     
     let showProfileMenu = $state(false);
     let isLoggingIn = $state(false);
 
-    function handleLogin() {
+    async function handleLogin() {
         isLoggingIn = true;
-        setTimeout(() => {
-            $currentUser = { name: 'Mark', avatar: null };
-            toast.show('Welcome back, Mark.', 'success');
-            isLoggingIn = false;
-        }, 800);
+        await currentUser.login();
+        isLoggingIn = false;
     }
 
-    function handleLogout() {
-        $currentUser = null;
+    async function handleLogout() {
+        await currentUser.logout();
         showProfileMenu = false;
-        toast.show('Logged out.', 'success');
     }
 </script>
 
@@ -40,10 +45,14 @@
         <div class="relative">
             <button 
                 onclick={() => showProfileMenu = !showProfileMenu} 
-                class="flex items-center gap-3 pl-4 pr-1.5 py-1.5 bg-[#111] border border-white/10 rounded-full hover:bg-[#222] transition-colors cursor-pointer"
+                class="flex items-center gap-3 pl-4 pr-1.5 py-1.5 bg-[#111] border border-white/10 rounded-full hover:bg-[#222] transition-colors cursor-pointer shadow-lg"
             >
                 <span class="text-xs font-medium text-neutral-400 group-hover:text-white transition-colors">{$currentUser.name}</span>
-                <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 border border-white/10"></div>
+                {#if $currentUser.avatar}
+                    <img src={$currentUser.avatar} alt="Avatar" class="w-8 h-8 rounded-full border border-white/10" />
+                {:else}
+                    <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 border border-white/10"></div>
+                {/if}
             </button>
 
             {#if showProfileMenu}
@@ -64,7 +73,7 @@
         <button 
             onclick={handleLogin} 
             disabled={isLoggingIn}
-            class="flex items-center gap-2 px-4 py-2 bg-[#111] border border-white/10 text-neutral-400 text-xs font-medium rounded-full hover:bg-[#222] hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+            class="flex items-center gap-2 px-4 py-2 bg-[#111] border border-white/10 text-neutral-400 text-xs font-medium rounded-full hover:bg-[#222] hover:text-white transition-colors cursor-pointer disabled:opacity-50 shadow-lg"
         >
             {#if isLoggingIn}
                 <Loader2 class="w-3.5 h-3.5 animate-spin" />
@@ -80,8 +89,26 @@
     {@render children()}
 </main>
 
+{#if $searchStore.selectedMovie}
+    <MovieDetailModal 
+        movie={$searchStore.selectedMovie} 
+        on:close={() => searchStore.closeModal()} 
+    />
+{/if}
+
+{#if $toast}
+    <div 
+        transition:fade={{ duration: 200 }}
+        class="fixed top-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 bg-[#111] border border-white/10 rounded-full shadow-2xl flex items-center gap-2 text-xs font-medium text-white pointer-events-none"
+    >
+        <div class="w-2 h-2 rounded-full {$toast.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}"></div>
+        {$toast.message}
+    </div>
+{/if}
+
 <nav class="fixed bottom-8 left-1/2 transform -translate-x-1/2 z-50">
-    <div class="flex items-center gap-2 bg-[#111] border border-white/10 p-2 rounded-2xl ring-1 ring-white/5">
+    <div class="flex items-center gap-2 bg-[#111] border border-white/10 p-2 rounded-2xl ring-1 ring-white/5 shadow-2xl shadow-black/50">
+        
         <a href="/" class="relative px-5 py-3 rounded-xl transition-colors duration-200 group flex flex-col items-center gap-1 {$page.url.pathname === '/' ? 'bg-white/10 text-white' : 'text-neutral-500 hover:text-white hover:bg-white/5'}">
             <Home class="w-5 h-5" />
         </a>
