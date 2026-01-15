@@ -56,27 +56,40 @@ function createAuthStore() {
     return {
         subscribe,
         init: () => {
-            if (typeof window === 'undefined') return; // SSR Safety
+            if (typeof window === 'undefined') return;
+            
             onAuthStateChanged(auth, async (firebaseUser) => {
                 if (firebaseUser) {
+                    // 1. FAST UPDATE: Set UI immediately (Optimistic)
+                    // The user sees they are logged in instantly.
                     const userData: User = {
                         uid: firebaseUser.uid,
                         name: firebaseUser.displayName || 'Curator',
                         email: firebaseUser.email,
                         avatar: firebaseUser.photoURL,
-                        watchlist: [],
-                        hearts: []
+                        watchlist: [], // Empty for now
+                        hearts: []     // Empty for now
                     };
+                    set(userData); 
 
+                    // 2. BACKGROUND UPDATE: Fetch Database Data
                     try {
                         const userRef = doc(db, 'users', firebaseUser.uid);
                         const userSnap = await getDoc(userRef);
 
                         if (userSnap.exists()) {
                             const data = userSnap.data();
-                            userData.watchlist = data.watchlist?.map((m: any) => String(m.id)) || [];
-                            userData.hearts = data.hearts?.map((m: any) => String(m.id)) || [];
+                            // Update the existing store with the data when it arrives
+                            update(u => {
+                                if (!u) return null;
+                                return {
+                                    ...u,
+                                    watchlist: data.watchlist?.map((m: any) => String(m.id)) || [],
+                                    hearts: data.hearts?.map((m: any) => String(m.id)) || []
+                                };
+                            });
                         } else {
+                            // Create profile silently
                             await setDoc(userRef, {
                                 name: userData.name,
                                 email: userData.email,
@@ -86,9 +99,8 @@ function createAuthStore() {
                             });
                         }
                     } catch (e) {
-                        console.error("Error fetching user profile:", e);
+                        console.error("Background sync error:", e);
                     }
-                    set(userData);
                 } else {
                     set(null);
                 }
@@ -97,10 +109,11 @@ function createAuthStore() {
         login: async () => {
             try {
                 await signInWithPopup(auth, googleProvider);
-                toast.show("Welcome back.", "success");
+                // Success toast handled by listener or UI
             } catch (err: any) {
                 console.error("Login failed", err);
                 toast.show(err.message, "error");
+                throw err; // Re-throw so the modal knows to stop loading
             }
         },
         logout: async () => {

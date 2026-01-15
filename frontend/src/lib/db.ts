@@ -1,32 +1,43 @@
 import { db } from './firebase';
 import { doc, updateDoc, arrayUnion, arrayRemove, increment } from 'firebase/firestore';
-import type { EnrichedMovie } from './logic';
+import type { EnrichedMovie } from '$lib/logic';
 
 const USERS_COLLECTION = 'users';
 
-/**
- * Type definition for the interaction
- */
 export type InteractionType = 'hearts' | 'watchlist';
 
 /**
- * Toggles a movie in the user's list (Heart or Watchlist)
- * @param uid The user's ID
- * @param movie The full movie object
- * @param type 'hearts' or 'watchlist'
- * @param isAdding true to add, false to remove
+ * Helper: Firestore crashes if you save 'undefined'.
+ * This converts 'undefined' to 'null' for every field.
  */
+function sanitize(obj: any) {
+    const clean: any = {};
+    Object.keys(obj).forEach(key => {
+        clean[key] = obj[key] === undefined ? null : obj[key];
+    });
+    return clean;
+}
+
 export async function toggleInteraction(uid: string, movie: EnrichedMovie, type: InteractionType, isAdding: boolean) {
+    if (!uid) {
+        console.error("[DB] No UID provided to toggleInteraction");
+        return;
+    }
+
     const userRef = doc(db, USERS_COLLECTION, uid);
     
-    // We store a minimal version to save database costs.
-    // We don't need the full palette/cast list in the user's profile.
-    const movieMin = {
-        id: movie.movie_id, // Ensure this matches your API ID
-        title: movie.title,
-        year: movie.year,
-        posterUrl: movie.posterUrl // Keep poster for the Profile Grid
+    // 1. Construct the minimal object safely
+    // REMOVED: posterUrl (to save space and avoid undefined errors)
+    const rawData = {
+        id: movie.movie_id || (movie as any).id || (movie as any)._id || "unknown_id", 
+        title: movie.title || "Unknown Title",
+        year: movie.year || "N/A"
     };
+
+    // 2. Sanitize it just in case 'year' or 'title' are missing
+    const movieMin = sanitize(rawData);
+
+    console.log(`[DB] Attempting to ${isAdding ? 'add' : 'remove'} ${type}:`, movieMin);
 
     try {
         if (isAdding) {
@@ -34,44 +45,38 @@ export async function toggleInteraction(uid: string, movie: EnrichedMovie, type:
                 [type]: arrayUnion(movieMin)
             });
         } else {
-            // NOTE: Firestore arrayRemove requires an EXACT match of the object.
-            // In a real production app, you might just store IDs and fetch details later,
-            // but for this prototype, storing the object is faster for the UI.
+            // Note: arrayRemove requires the EXACT object to work.
+            // If the stored object has different fields than this one, remove might fail silently.
+            // But since we standardized movieMin above, it should match future removals.
             await updateDoc(userRef, {
                 [type]: arrayRemove(movieMin)
             });
         }
+        console.log(`[DB] Success: Updated ${type}`);
     } catch (error) {
-        console.error(`Error updating ${type}:`, error);
+        console.error(`[DB] CRITICAL ERROR updating ${type}:`, error);
         throw error;
     }
 }
 
-/**
- * Submits a tag for a movie.
- * 1. Adds to User's "contributions" stats.
- * 2. In a real backend, this would also add to the Movie's global tag cloud.
- */
 export async function submitTag(uid: string, movieId: number, tag: string) {
+    if (!uid) return;
     const userRef = doc(db, USERS_COLLECTION, uid);
     
     try {
-        await updateDoc(userRef, {
-            // 1. Increment the user's "Level" score
-            tags_contributed_count: increment(1),
-            
-            // 2. Keep a log of their specific tags (Optional, good for "My Tags" tab)
-            tags_history: arrayUnion({
-                movieId,
-                tag,
-                timestamp: new Date().toISOString()
-            })
+        const tagData = sanitize({
+            movieId: movieId || null,
+            tag: tag || "unknown",
+            timestamp: new Date().toISOString()
         });
-        
-        console.log(`Tag "${tag}" submitted for movie ${movieId}`);
-        
+
+        await updateDoc(userRef, {
+            tags_contributed_count: increment(1),
+            tags_history: arrayUnion(tagData)
+        });
+        console.log(`[DB] Tag submitted: ${tag}`);
     } catch (error) {
-        console.error("Error submitting tag:", error);
+        console.error("[DB] Error submitting tag:", error);
         throw error;
     }
 }
