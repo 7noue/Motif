@@ -1,14 +1,15 @@
 <script lang="ts">
+    import './layout.css';
     import { onMount } from 'svelte';
     import favicon from '$lib/assets/favicon.svg';
     import { Home, Compass, User as UserIcon, LogIn, LogOut, Loader2 } from 'lucide-svelte';
     import { page } from '$app/stores';
-    import { currentUser, toast, searchStore } from '$lib/stores'; // 2. Stores
+    import { currentUser, toast, searchStore, isLoginModalOpen } from '$lib/stores';
     import { fly, fade } from 'svelte/transition';
-    import MovieDetailModal from '$lib/components/movie/MovieDetailModal.svelte'; // 3. Modal
-    import './layout.css'
-    
-    // Initialize Auth Listener
+    import MovieDetailModal from '$lib/components/movie/MovieDetailModal.svelte';
+    import LoginModal from '$lib/components/auth/LoginModal.svelte';
+
+    // Initialize Auth Listener (Runs only in browser)
     onMount(() => {
         currentUser.init();
     });
@@ -16,12 +17,10 @@
     let { children } = $props();
     
     let showProfileMenu = $state(false);
-    let isLoggingIn = $state(false);
 
-    async function handleLogin() {
-        isLoggingIn = true;
-        await currentUser.login();
-        isLoggingIn = false;
+    // Open the Login Modal instead of direct login
+    function openLogin() {
+        $isLoginModalOpen = true;
     }
 
     async function handleLogout() {
@@ -71,15 +70,10 @@
         </div>
     {:else}
         <button 
-            onclick={handleLogin} 
-            disabled={isLoggingIn}
-            class="flex items-center gap-2 px-4 py-2 bg-[#111] border border-white/10 text-neutral-400 text-xs font-medium rounded-full hover:bg-[#222] hover:text-white transition-colors cursor-pointer disabled:opacity-50 shadow-lg"
+            onclick={openLogin} 
+            class="flex items-center gap-2 px-4 py-2 bg-[#111] border border-white/10 text-neutral-400 text-xs font-medium rounded-full hover:bg-[#222] hover:text-white transition-colors cursor-pointer shadow-lg"
         >
-            {#if isLoggingIn}
-                <Loader2 class="w-3.5 h-3.5 animate-spin" />
-            {:else}
-                <LogIn class="w-3.5 h-3.5" /> 
-            {/if}
+            <LogIn class="w-3.5 h-3.5" /> 
             <span>Sign In</span>
         </button>
     {/if}
@@ -94,6 +88,10 @@
         movie={$searchStore.selectedMovie} 
         on:close={() => searchStore.closeModal()} 
     />
+{/if}
+
+{#if $isLoginModalOpen}
+    <LoginModal />
 {/if}
 
 {#if $toast}

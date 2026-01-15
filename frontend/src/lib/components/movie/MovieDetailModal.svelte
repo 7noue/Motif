@@ -1,9 +1,9 @@
 <script lang="ts">
     import { X, Play, Heart, Bookmark, Brain, Gauge, Star, Users, Zap } from 'lucide-svelte';
     import { createEventDispatcher } from 'svelte';
-    import { currentUser, toast } from '$lib/stores';
+    import { currentUser, toast, isLoginModalOpen } from '$lib/stores';
     import type { EnrichedMovie } from '$lib/logic';
-    import { toggleInteraction, submitTag } from '$lib/db'; // Firebase functions
+    import { toggleInteraction, submitTag } from '$lib/db';
 
     let { movie } = $props<{ movie: EnrichedMovie }>();
     
@@ -21,13 +21,13 @@
     // --- STATE ---
     let isHearted = $state(false);
     let isBookmarked = $state(false);
-    
     let tags = $state<Tag[]>([]);
     let customTagsAdded = $state(0);
     let userTagVotes = $state(0);
     let showAddTagInput = $state(false);
     let newTagValue = $state('');
 
+    // --- STATIC DATA ---
     const humanContext = {
         perfectFor: [
             "Late Night Contemplation",
@@ -38,26 +38,27 @@
         subculture: "Sigma Male Grindset / Neo-Noir Enthusiasts"
     };
 
+    // Cohesive, dark styling for similarity graph (Removed random gradients)
     const mockRecommendations = [
-        { title: "Blade Runner", year: 1982, match: 92, gradient: "from-cyan-500 to-blue-900" },
-        { title: "Drive", year: 2011, match: 88, gradient: "from-pink-500 to-rose-900" },
-        { title: "Taxi Driver", year: 1976, match: 85, gradient: "from-amber-500 to-orange-900" },
-        { title: "Nightcrawler", year: 2014, match: 83, gradient: "from-green-500 to-emerald-900" },
-        { title: "Collateral", year: 2004, match: 79, gradient: "from-purple-500 to-violet-900" }
+        { title: "Blade Runner", match: 92 },
+        { title: "Drive", match: 88 },
+        { title: "Taxi Driver", match: 85 },
+        { title: "Nightcrawler", match: 83 },
+        { title: "Collateral", match: 79 }
     ];
 
     // --- REAL DATA SYNC ---
     $effect(() => {
         // Reset local state when movie changes
-        tags = [...(movie.initialTags || [])];
+        tags = (movie.initialTags || []).map(t => ({...t})); 
         customTagsAdded = 0;
         userTagVotes = 0;
 
         // Check against real user data from Firebase
         if ($currentUser) {
             // Check if ID exists in the user's arrays (convert to string for safety)
-            isHearted = $currentUser.hearts.some(id => String(id) === String(movie.movie_id));
-            isBookmarked = $currentUser.watchlist.some(id => String(id) === String(movie.movie_id));
+            isHearted = $currentUser.hearts.includes(String(movie.movie_id));
+            isBookmarked = $currentUser.watchlist.includes(String(movie.movie_id));
         } else {
             isHearted = false;
             isBookmarked = false;
@@ -72,16 +73,21 @@
         dispatch('close'); 
     }
 
+    function handleBackdropKeydown(e: KeyboardEvent) {
+        if (e.key === 'Enter' || e.key === ' ') close();
+    }
+
+    // --- AUTH CHECK ---
     function requireAuth(): boolean {
         if (!$currentUser) {
-            toast.show("Sign in to curate vibes.", 'error');
+            // FIX: Open the login modal instead of just showing an error
+            $isLoginModalOpen = true; 
             return false;
         }
         return true;
     }
 
     // --- FIREBASE INTERACTIONS ---
-
     const handleToggle = async (type: 'heart' | 'bookmark') => {
         if (!requireAuth()) return;
 
@@ -98,7 +104,7 @@
         try {
             await toggleInteraction($currentUser!.uid, movie, listName, isAdding);
             
-            // 3. Update Local Store (So Profile page updates instantly)
+            // 3. Update Local Store
             currentUser.updateLocalLists(listName, String(movie.movie_id), isAdding);
             
             toast.show(isAdding ? (type === 'heart' ? "Added to Hearts" : "Added to Watchlist") : "Removed", "success");
@@ -112,8 +118,8 @@
     };
 
     const voteTag = (index: number) => {
-        // Local voting logic (Gamification)
         if (!requireAuth()) return;
+        
         const tag = tags[index];
         if (tag.userVoted) {
             tag.userVoted = false; 
@@ -136,6 +142,7 @@
 
     const addNewTag = async () => {
         if (!requireAuth()) return;
+        
         const cleanTag = newTagValue.trim();
         if (!cleanTag) return;
         
@@ -171,16 +178,11 @@
         // 2. Firebase Submission
         try {
             await submitTag($currentUser!.uid, movie.movie_id, cleanTag);
-            toast.show("Tag contributed to ecosystem.", "success");
+            toast.show("Tag contributed.", "success");
         } catch (err) {
             console.error(err);
             toast.show("Failed to sync tag.", "error");
-            // Ideally revert here, but for tags we often let it slide in UI
         }
-    };
-
-    const handleBackdropKeydown = (e: KeyboardEvent) => {
-        if (e.key === 'Enter' || e.key === ' ') close();
     };
 </script>
 
@@ -199,7 +201,7 @@
         onkeydown={(e) => e.stopPropagation()}
         role="document"
         tabindex="-1"
-        class="relative w-full max-w-4xl h-[90vh] bg-[#0e0e0e] border border-white/10 rounded-[24px] overflow-hidden flex flex-col md:flex-row will-change-contents"
+        class="relative w-full max-w-4xl h-[90vh] bg-[#0e0e0e] border border-white/10 rounded-3xl overflow-hidden flex flex-col md:flex-row will-change-contents"
         style="contain: paint layout;"
     >
         
@@ -251,7 +253,7 @@
                     <span class="text-[9px] font-bold uppercase tracking-widest text-white/50">{movie.palette.name}</span>
                 </div>
 
-                <div class="grid grid-cols-3  py-2 border-b border-white/5">
+                <div class="grid grid-cols-3 py-2 border-b border-white/5">
                     <div class="flex flex-col items-center">
                         <span class="text-[9px] font-bold text-neutral-500 uppercase tracking-widest mb-0.5">Match</span>
                         <span class="text-emerald-400 font-bold text-lg">{Math.round(movie.score * 100)}%</span>
@@ -391,14 +393,14 @@
                     <div class="grid grid-cols-5 gap-2">
                         {#each mockRecommendations as rec}
                             <div class="cursor-pointer flex flex-col items-center group">
-                                <div class="relative w-full aspect-[3/4] rounded-lg overflow-hidden mb-1.5 bg-neutral-900 border border-white/5">
-                                    <div class="absolute inset-0 bg-gradient-to-br {rec.gradient} opacity-60 group-hover:opacity-80 transition-opacity"></div>
+                                <div class="relative w-full aspect-[3/4] rounded-lg overflow-hidden mb-1.5 bg-[#111] border border-white/5 group-hover:border-white/20 transition-colors">
+                                    <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60"></div>
                                     <div class="absolute bottom-1 left-1 right-1">
-                                        <span class="text-[8px] font-bold text-white/90 bg-black/60 px-1.5 py-0.5 rounded truncate block text-center">
+                                        <span class="text-[8px] font-medium text-white/80 block truncate text-center">
                                             {rec.title}
                                         </span>
                                     </div>
-                                    <div class="absolute top-1 right-1 px-1 py-0.5 bg-black/80 rounded text-[7px] font-bold text-emerald-400 border border-white/5">
+                                    <div class="absolute top-1 right-1 px-1 py-0.5 bg-black/60 backdrop-blur-md rounded text-[7px] font-bold text-emerald-500 border border-white/5">
                                         {rec.match}%
                                     </div>
                                 </div>

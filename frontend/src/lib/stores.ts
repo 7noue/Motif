@@ -1,11 +1,18 @@
 import { writable, get } from 'svelte/store';
+import { auth, googleProvider, db } from './firebase'; 
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore'; 
 import { API_URL } from './constants';
 import { enrichMovieData, type EnrichedMovie } from '$lib/logic';
 
 // --- Types ---
 export interface User {
+    uid: string;
     name: string;
+    email: string | null;
     avatar: string | null;
+    watchlist: string[]; 
+    hearts: string[];    
 }
 
 export interface SearchState {
@@ -18,15 +25,14 @@ export interface SearchState {
         mood: string | null;
     };
     error: string | null;
-    selectedMovie: EnrichedMovie | null; // <--- ADDED THIS
+    selectedMovie: EnrichedMovie | null;
 }
 
 export type ToastType = 'error' | 'success';
 
-// --- AUTH STORE ---
-export const currentUser = writable<User | null>(null);
+// --- STORES ---
+export const isLoginModalOpen = writable(false);
 
-// --- TOAST STORE ---
 function createToastStore() {
     const { subscribe, set } = writable<{ message: string; type: ToastType } | null>(null);
     let timeout: ReturnType<typeof setTimeout>;
@@ -34,7 +40,7 @@ function createToastStore() {
     return {
         subscribe,
         show: (message: string, type: ToastType = 'error') => {
-            console.log(`[Toast] ${type}: ${message}`); // Debug log
+            console.log(`[Toast] ${type}: ${message}`);
             clearTimeout(timeout);
             set({ message, type });
             timeout = setTimeout(() => set(null), 3000);
@@ -43,7 +49,77 @@ function createToastStore() {
 }
 export const toast = createToastStore();
 
-// --- SEARCH STORE ---
+// --- AUTH STORE ---
+function createAuthStore() {
+    const { subscribe, set, update } = writable<User | null>(null);
+
+    return {
+        subscribe,
+        init: () => {
+            if (typeof window === 'undefined') return; // SSR Safety
+            onAuthStateChanged(auth, async (firebaseUser) => {
+                if (firebaseUser) {
+                    const userData: User = {
+                        uid: firebaseUser.uid,
+                        name: firebaseUser.displayName || 'Curator',
+                        email: firebaseUser.email,
+                        avatar: firebaseUser.photoURL,
+                        watchlist: [],
+                        hearts: []
+                    };
+
+                    try {
+                        const userRef = doc(db, 'users', firebaseUser.uid);
+                        const userSnap = await getDoc(userRef);
+
+                        if (userSnap.exists()) {
+                            const data = userSnap.data();
+                            userData.watchlist = data.watchlist?.map((m: any) => String(m.id)) || [];
+                            userData.hearts = data.hearts?.map((m: any) => String(m.id)) || [];
+                        } else {
+                            await setDoc(userRef, {
+                                name: userData.name,
+                                email: userData.email,
+                                watchlist: [],
+                                hearts: [],
+                                tags_contributed: 0
+                            });
+                        }
+                    } catch (e) {
+                        console.error("Error fetching user profile:", e);
+                    }
+                    set(userData);
+                } else {
+                    set(null);
+                }
+            });
+        },
+        login: async () => {
+            try {
+                await signInWithPopup(auth, googleProvider);
+                toast.show("Welcome back.", "success");
+            } catch (err: any) {
+                console.error("Login failed", err);
+                toast.show(err.message, "error");
+            }
+        },
+        logout: async () => {
+            await signOut(auth);
+            set(null);
+            toast.show("Logged out.", "success");
+        },
+        updateLocalLists: (type: 'hearts' | 'watchlist', movieId: string, isAdding: boolean) => {
+            update(u => {
+                if (!u) return null;
+                const list = u[type];
+                const newList = isAdding ? [...list, movieId] : list.filter(id => id !== movieId);
+                return { ...u, [type]: newList };
+            });
+        }
+    };
+}
+export const currentUser = createAuthStore();
+
 function createSearchStore() {
     const { subscribe, set, update } = writable<SearchState>({
         query: '',
@@ -52,101 +128,52 @@ function createSearchStore() {
         hasSearched: false,
         activeContext: { social: null, mood: null },
         error: null,
-        selectedMovie: null // <--- ADDED THIS (Initial State)
+        selectedMovie: null
     });
 
     return {
         subscribe,
-        
         reset: () => update(s => ({ 
-            ...s, 
-            query: '', 
-            movies: [], 
-            hasSearched: false, 
-            activeContext: { social: null, mood: null },
-            error: null,
-            selectedMovie: null // <--- ADDED THIS (Reset logic)
+            ...s, query: '', movies: [], hasSearched: false, 
+            activeContext: { social: null, mood: null }, error: null, selectedMovie: null 
         })),
-        
         setQuery: (q: string) => update(s => ({ ...s, query: q })),
-        
-        // 👇 ADDED THESE TWO METHODS 👇
         selectMovie: (movie: EnrichedMovie) => update(s => ({ ...s, selectedMovie: movie })),
         closeModal: () => update(s => ({ ...s, selectedMovie: null })),
-        // 👆 END ADDITIONS 👆
-
+        
         toggleContext: (type: keyof SearchState['activeContext'], value: string) => update(s => {
             const current = s.activeContext[type];
-            return { 
-                ...s, 
-                activeContext: { 
-                    ...s.activeContext, 
-                    [type]: current === value ? null : value 
-                } 
-            };
+            return { ...s, activeContext: { ...s.activeContext, [type]: current === value ? null : value } };
         }),
 
         performSearch: async (queryOverride: string | null = null) => {
-            // Get current state to construct the query
             const currentState = get(searchStore);
             const queryToUse = queryOverride || currentState.query.trim();
-
             if (!queryToUse) return;
 
-            // Update state: Loading starts
-            update(s => ({ 
-                ...s, 
-                query: queryToUse,
-                isLoading: true, 
-                hasSearched: true, 
-                error: null 
-            }));
-
+            update(s => ({ ...s, query: queryToUse, isLoading: true, hasSearched: true, error: null }));
             const contextString = Object.values(currentState.activeContext).filter(Boolean).join(' ');
             const finalQuery = `${queryToUse} ${contextString}`.trim();
-
-            console.log(`[Search] Sending query to ${API_URL}:`, finalQuery);
 
             try {
                 const response = await fetch(API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        query: finalQuery, 
-                        top_k: 9 
-                    })
+                    body: JSON.stringify({ query: finalQuery, top_k: 9 })
                 });
-
-                if (!response.ok) {
-                    throw new Error(`API Error: ${response.status} ${response.statusText}`);
-                }
-
+                if (!response.ok) throw new Error(`API Error: ${response.status}`);
+                
                 const rawData = await response.json();
-                console.log('[Search] Raw Data received:', rawData);
-
-                // Transform data safely
                 const enriched = rawData.map((movie: any) => {
-                    try {
-                        return enrichMovieData(movie);
-                    } catch (err) {
-                        console.error('[Search] Failed to enrich movie:', movie, err);
-                        return null;
-                    }
-                }).filter(Boolean); // Remove any failed items
+                    try { return enrichMovieData(movie); } catch (err) { return null; }
+                }).filter(Boolean);
                 
                 update(s => ({ ...s, movies: enriched, isLoading: false }));
-
             } catch (e: any) {
-                console.error('[Search] Failed:', e);
                 toast.show("Failed to connect to Motif Core.", "error");
-                update(s => ({ 
-                    ...s, 
-                    isLoading: false, 
-                    error: e.message || "Unknown error" 
-                }));
+                update(s => ({ ...s, isLoading: false, error: e.message || "Unknown error" }));
             }
         }
     };
 }
- 
 export const searchStore = createSearchStore();

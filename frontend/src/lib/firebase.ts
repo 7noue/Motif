@@ -28,13 +28,11 @@ export const googleProvider = new GoogleAuthProvider();
 export let analytics: any;
 
 if (typeof window !== 'undefined') {
-    // Only run this code on the client-side (browser)
     isSupported().then((supported) => {
         if (supported) {
             analytics = getAnalytics(app);
         }
     });
 }
-
 
 
