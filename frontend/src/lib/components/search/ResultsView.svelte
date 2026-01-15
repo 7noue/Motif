@@ -1,10 +1,9 @@
 <script lang="ts">
     import { Film, Search, ArrowRight, Star } from 'lucide-svelte';
-    // REMOVED: import { fly } from 'svelte/transition'; <- This was killing your CPU
     import { createEventDispatcher } from 'svelte';
-    import { searchStore } from '../../stores';
-    import { CONTEXT_OPTIONS, VIBES } from '../../constants';
-    import { getGradient, type EnrichedMovie } from '../../logic';
+    import { searchStore } from '$lib/stores';
+    import { CONTEXT_OPTIONS, VIBES } from '$lib/constants';
+    import { getGradient, type EnrichedMovie } from '$lib/logic';
 
     const dispatch = createEventDispatcher<{ select: EnrichedMovie }>();
 
@@ -14,7 +13,6 @@
         dispatch('select', movie); 
     }
 
-    // Optimization: Local state for input to prevent store thrashing on every keystroke
     let localQuery = '';
     $: localQuery = query;
 
@@ -74,34 +72,52 @@
     </div>
 
     <div class="w-full pb-32">
-        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" style="content-visibility: auto; contain-intrinsic-size: 1px 400px;">
+        <section class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3" style="content-visibility: auto; contain-intrinsic-size: 1px 350px;">
             {#if isLoading}
-                {#each Array(6) as _} <div class="h-64 rounded-3xl bg-[#0e0e0e] border border-white/5 animate-pulse"></div> {/each}
+                {#each Array(8) as _} 
+                    <div class="aspect-square rounded-2xl bg-[#0e0e0e] border border-white/5 animate-pulse"></div> 
+                {/each}
             {:else}
                 {#each movies as movie, i (movie.movie_id || i)}
                     <button 
                         on:click={() => onSelect(movie)} 
-                        class="group relative w-full flex flex-col h-full bg-[#0e0e0e] border border-white/10 rounded-3xl overflow-hidden hover:border-white/30 text-left transition-colors duration-200 cursor-pointer animate-enter transform-gpu"
+                        class="group flex flex-col bg-[#0e0e0e] border border-white/10 rounded-2xl overflow-hidden hover:border-white/30 text-left transition-colors duration-200 cursor-pointer animate-enter transform-gpu shadow-lg shadow-black/20"
                         style="animation-delay: {i < 10 ? i * 50 : 0}ms"
                     >
-                        <div class="h-40 w-full relative overflow-hidden shrink-0">
-                            <div class="absolute inset-0 bg-gradient-to-br {getGradient(movie.title)} opacity-30 group-hover:opacity-50 transition-opacity"></div>
+                        <div class="relative w-full aspect-square overflow-hidden bg-[#111] border-b border-white/5">
+                            {#if movie.posterUrl}
+                                <img 
+                                    src={movie.posterUrl} 
+                                    alt={movie.title} 
+                                    loading="lazy"
+                                    decoding="async"
+                                    class="w-full h-full object-cover object-top opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all duration-500 ease-out"
+                                />
+                            {:else}
+                                <div class="w-full h-full bg-linear-to-br {getGradient(movie.title)} opacity-60"></div>
+                            {/if}
                             
-                            <div class="absolute top-3 right-3 flex items-center gap-1.5 bg-black/80 px-2.5 py-1 rounded-lg border border-white/5">
+                            <div class="absolute top-2 right-2 flex items-center gap-1 bg-black/80 backdrop-blur-sm px-2 py-1 rounded-md border border-white/10">
                                 <Star class="w-3 h-3 text-indigo-400 fill-indigo-400" />
-                                <span class="text-xs font-bold text-white">{Math.round(movie.score * 100)}%</span>
+                                <span class="text-[10px] font-bold text-white">{Math.round(movie.score * 100)}%</span>
                             </div>
                         </div>
 
-                        <div class="p-5 flex flex-col h-full relative z-10 -mt-6">
-                            <h2 class="text-xl font-bold text-white leading-tight mb-2 group-hover:text-indigo-200 transition-colors">{movie.title}</h2>
-                            <p class="text-neutral-400 text-sm font-light leading-relaxed line-clamp-3 mb-4">{movie.overview}</p>
-                            
-                            <div class="mt-auto border-t border-white/5 pt-4 w-full">
-                                <div class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] uppercase text-neutral-400 font-medium group-hover:bg-white/10 transition-colors">
-                                    <svelte:component this={movie.socialBadges[0].icon} class="w-3 h-3" /> {movie.socialBadges[0].text}
-                                </div>
+                        <div class="p-4 bg-[#0e0e0e]">
+                            <h2 class="text-sm font-bold text-white leading-tight line-clamp-1 group-hover:text-indigo-300 transition-colors mb-1">
+                                {movie.title}
+                            </h2>
+                            <div class="flex items-center justify-between mt-2">
+                                <p class="text-[10px] text-neutral-500 line-clamp-1">{movie.director || 'Unknown'}</p>
+                                <span class="text-[10px] font-mono text-neutral-400">{movie.year}</span>
                             </div>
+                            
+                            {#if movie.socialBadges && movie.socialBadges[0]}
+                                <div class="mt-3 pt-3 border-t border-white/5 flex items-center gap-1.5 text-[9px] text-neutral-400 uppercase tracking-wider font-medium">
+                                    <svelte:component this={movie.socialBadges[0].icon} class="w-2.5 h-2.5 opacity-70" /> 
+                                    {movie.socialBadges[0].text}
+                                </div>
+                            {/if}
                         </div>
                     </button>
                 {/each}
@@ -111,20 +127,12 @@
 </div>
 
 <style>
-    /* CSS Animation runs on the Compositor thread (GPU) unlike Svelte Fly (CPU) */
     @keyframes enter {
-        from {
-            opacity: 0;
-            transform: translateY(20px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
     }
-
     .animate-enter {
         animation: enter 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-        opacity: 0; /* Start hidden */
+        opacity: 0; 
     }
 </style>
