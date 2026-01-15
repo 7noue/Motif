@@ -17,7 +17,8 @@ export interface SearchState {
         social: string | null;
         mood: string | null;
     };
-    error: string | null; // Added error state
+    error: string | null;
+    selectedMovie: EnrichedMovie | null; // <--- ADDED THIS
 }
 
 export type ToastType = 'error' | 'success';
@@ -50,7 +51,8 @@ function createSearchStore() {
         isLoading: false,
         hasSearched: false,
         activeContext: { social: null, mood: null },
-        error: null
+        error: null,
+        selectedMovie: null // <--- ADDED THIS (Initial State)
     });
 
     return {
@@ -62,11 +64,17 @@ function createSearchStore() {
             movies: [], 
             hasSearched: false, 
             activeContext: { social: null, mood: null },
-            error: null
+            error: null,
+            selectedMovie: null // <--- ADDED THIS (Reset logic)
         })),
         
         setQuery: (q: string) => update(s => ({ ...s, query: q })),
         
+        // 👇 ADDED THESE TWO METHODS 👇
+        selectMovie: (movie: EnrichedMovie) => update(s => ({ ...s, selectedMovie: movie })),
+        closeModal: () => update(s => ({ ...s, selectedMovie: null })),
+        // 👆 END ADDITIONS 👆
+
         toggleContext: (type: keyof SearchState['activeContext'], value: string) => update(s => {
             const current = s.activeContext[type];
             return { 

@@ -4,7 +4,6 @@
     import { page } from '$app/stores';
     import { currentUser, toast } from '$lib/stores';
     import { fly } from 'svelte/transition';
-        
     let { children } = $props();
     
     let showProfileMenu = $state(false);
@@ -87,7 +86,7 @@
             <Home class="w-5 h-5" />
         </a>
 
-        <a href="/explore" class="relative px-5 py-3 rounded-xl transition-colors duration-200 group flex flex-col items-center gap-1 {$page.url.pathname === '/explore' ? 'bg-white/10 text-white' : 'text-neutral-500 hover:text-white hover:bg-white/5'}">
+        <a href="/discovery" class="relative px-5 py-3 rounded-xl transition-colors duration-200 group flex flex-col items-center gap-1 {$page.url.pathname === '/discovery' ? 'bg-white/10 text-white' : 'text-neutral-500 hover:text-white hover:bg-white/5'}">
             <Compass class="w-5 h-5" />
         </a>
 
