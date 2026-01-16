@@ -3,23 +3,18 @@ import os
 import logging
 from typing import Optional
 
-# --- 1. ABSOLUTE PATH SETUP ---
-# Get the directory where THIS file (db.py) is located: .../Motif/backend/scripts
+# --- PATH SETUP ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Go up one level to the 'backend' folder
 BACKEND_DIR = os.path.dirname(CURRENT_DIR)
-# Force the DB to be exactly here
 DB_PATH = os.path.join(BACKEND_DIR, "movies.db")
-# Log file location
 LOG_PATH = os.path.join(BACKEND_DIR, "db_activity.log")
 
-# --- 2. LOGGING CONFIGURATION ---
-# This creates a file 'db_activity.log' that records every hit/miss
+# --- LOGGING ---
 logging.basicConfig(
     filename=LOG_PATH,
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    filemode='a' # Append mode (doesn't overwrite old logs)
+    filemode='a' 
 )
 logger = logging.getLogger("DB_Logger")
 
@@ -28,65 +23,67 @@ def get_db_connection():
         msg = f"❌ CRITICAL ERROR: Database file not found at: {DB_PATH}"
         print(msg)
         logger.critical(msg)
-        print("   -> Run 'python scripts/init_db.py' to create it.")
         raise FileNotFoundError(f"Database missing: {DB_PATH}")
     
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
-def find_movie_metadata(title: str, year: int) -> Optional[dict]:
+def find_movie_metadata(title: str, year: Optional[int] = None) -> Optional[dict]:
+    """
+    Strict Database Lookup.
+    """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
 
         clean_title = str(title).strip()
         
-        # IMPROVEMENT: Fuzzy Year Matching (Year +/- 1)
-        # This catches "Fight Club 1998" vs "1999" errors from the AI
-        query = """
-            SELECT * FROM movies 
-            WHERE LOWER(TRIM(title)) = LOWER(?) 
-            AND year >= ? AND year <= ?
-        """
-        
-        # Search for year - 1 to year + 1
-        cursor.execute(query, (clean_title, year - 1, year + 1))
+        if year and year > 1900:
+            # STRICT: Title must match AND Year must be exact (or +/- 1 for release date variance)
+            query = """
+                SELECT * FROM movies 
+                WHERE LOWER(TRIM(title)) = LOWER(?) 
+                AND year = ?
+            """
+            cursor.execute(query, (clean_title, year))
+        else:
+            # TITLE ONLY: Only if we truly don't have a year.
+            query = """
+                SELECT * FROM movies 
+                WHERE LOWER(TRIM(title)) = LOWER(?)
+            """
+            cursor.execute(query, (clean_title,))
+
         row = cursor.fetchone()
         conn.close()
 
         if row:
-            msg = f"✅ HIT: '{clean_title}' ({year})"
-            print(msg)
-            logger.info(msg)
+            # msg = f"✅ HIT: '{clean_title}' ({year})"
+            # print(msg) # Optional: comment out to reduce console noise
             return dict(row)
         else:
-            # It's okay! We will handle this gracefully in main.py
-            msg = f"⚠️ MISS: '{clean_title}' ({year}) - Not in local DB"
-            print(msg)
-            logger.warning(msg) 
+            # msg = f"⚠️ MISS: '{clean_title}' ({year})"
+            # print(msg)
             return None
 
     except Exception as e:
-        err_msg = f"❌ ERROR searching for '{title}': {str(e)}"
+        err_msg = f"❌ DB ERROR: {str(e)}"
         print(err_msg)
         logger.error(err_msg)
         return None
 
 def get_simple_metadata(title: str) -> Optional[dict]:
     """
-    Quick lookup for just poster/year/title for 'Similar Films' grid.
+    Quick lookup for poster URL.
     """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Simple exact match is fast and sufficient for internal links
         query = "SELECT title, year, poster_url FROM movies WHERE LOWER(TRIM(title)) = LOWER(?)"
         cursor.execute(query, (title.strip(),))
         row = cursor.fetchone()
         conn.close()
-        
         return dict(row) if row else None
     except Exception:
         return None

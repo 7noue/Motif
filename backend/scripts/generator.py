@@ -76,7 +76,7 @@ class TitleGenerationLayer:
             - ACT II (Titles 13-25): THE VIBE-MATCHES. Films that share the same cinematic DNA, psychological profiles, or aesthetic atmosphere.
             - ACT III (Titles 26-30): THE WILDCARDS. "Deep-cut" thematic cousins that offer a fresh or unexpected perspective while remaining culturally relevant to the query.
 
-            OUTPUT DISCIPLINE:
+            OUTPUT DISCIPLINE (STRICT):
             -Titles must be real, well-known films.
             -Years must be accurate.
             -No duplicate films.
