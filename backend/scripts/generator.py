@@ -58,7 +58,7 @@ class TitleGenerationLayer:
             -Output ONLY a valid JSON object matching the provided schema not including separate keys for "Act I" or "Act II.
             -The JSON must have EXACTLY ONE root key: "titles".
             -Return a maximum of 30 titles.
-            -Do NOT include TV shows, miniseries, or web content. Films only.
+            -STRICTLY Do NOT include TV shows, miniseries, or web content. Films only.
             -Do NOT include commentary, markdown, or extra text.
             -Optimize for Archetypal Resonance: Prioritize how a film "feels" and the "type of character" it features over literal plot summaries.
 
@@ -81,7 +81,8 @@ class TitleGenerationLayer:
             -Years must be accurate.
             -No duplicate films.
             -No "hallucinating" films that don't exist.
-
+            -SORTING: The `titles` array MUST be strictly sorted by `confidence_score` in descending order (Highest first).
+            -VARIANCE: Do NOT round confidence scores to the nearest 5. Use specific, granular integers (e.g., 93, 87, 64, 41) to imply calculation precision. Never output 100.
 
             *** CONFIDENCE COMPUTATION LAYER (THE TRUTH CHECK) ***
             You must logically CALCULATE the 'confidence_score' (0-100) for each film based on these 3 weighted layers. Do NOT just assign a high score because a film is in ACT I.

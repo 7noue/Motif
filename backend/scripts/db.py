@@ -72,3 +72,21 @@ def find_movie_metadata(title: str, year: int) -> Optional[dict]:
         print(err_msg)
         logger.error(err_msg)
         return None
+
+def get_simple_metadata(title: str) -> Optional[dict]:
+    """
+    Quick lookup for just poster/year/title for 'Similar Films' grid.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Simple exact match is fast and sufficient for internal links
+        query = "SELECT title, year, poster_url FROM movies WHERE LOWER(TRIM(title)) = LOWER(?)"
+        cursor.execute(query, (title.strip(),))
+        row = cursor.fetchone()
+        conn.close()
+        
+        return dict(row) if row else None
+    except Exception:
+        return None
