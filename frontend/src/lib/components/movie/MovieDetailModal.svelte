@@ -1,9 +1,8 @@
 <script lang="ts">
     import { X, Play, Heart, Bookmark, Brain, Gauge, Star, Users, Zap } from 'lucide-svelte';
     import { createEventDispatcher } from 'svelte';
-    import { currentUser, toast , searchStore} from '$lib/stores';
-    import type { EnrichedMovie } from '$lib/logic';
-    import { getGradient } from '$lib/logic';
+    import { currentUser, toast, searchStore, isLoginModalOpen } from '$lib/stores';
+    import { getGradient, type EnrichedMovie } from '$lib/logic';
 
     let { movie } = $props<{ movie: EnrichedMovie }>();
     
@@ -18,17 +17,16 @@
         isCustom: boolean;
     }
 
+    // --- STATE ---
     let isHearted = $state(false);
     let isBookmarked = $state(false);
-    
     let tags = $state<Tag[]>([]);
     let customTagsAdded = $state(0);
     let userTagVotes = $state(0);
     let showAddTagInput = $state(false);
     let newTagValue = $state('');
 
-    // --- DERIVED REAL DATA ---
-    // Extract real "Vibe" labels from the movie metadata
+    // --- DERIVED DATA ---
     let perfectFor = $derived([
         movie.tone_label,
         movie.primary_aesthetic ? `${movie.primary_aesthetic} Atmosphere` : null,
@@ -38,39 +36,64 @@
 
     let subculture = $derived(movie.primary_aesthetic || "General Cinema");
 
+    // --- SYNC WITH FIREBASE USER ---
     $effect(() => {
-        tags = [...(movie.initialTags || [])];
-        isHearted = false;
-        isBookmarked = false;
+        tags = (movie.initialTags || []).map(t => ({...t})); 
         customTagsAdded = 0;
         userTagVotes = 0;
+
+        if ($currentUser) {
+            isHearted = $currentUser.hearts.some(m => String(m.id) === String(movie.movie_id));
+            isBookmarked = $currentUser.watchlist.some(m => String(m.id) === String(movie.movie_id));
+        } else {
+            isHearted = false;
+            isBookmarked = false;
+        }
     });
 
-    function focusOnMount(node: HTMLInputElement) {
-        node.focus();
-    }
+    function focusOnMount(node: HTMLInputElement) { node.focus(); }
+    function close() { dispatch('close'); }
+    function handleBackdropKeydown(e: KeyboardEvent) { if (e.key === 'Enter' || e.key === ' ') close(); }
 
-    function close() { 
-        dispatch('close'); 
-    }
-
+    // --- ACTIONS ---
     function requireAuth(): boolean {
         if (!$currentUser) {
-            toast.show("Sign in to curate vibes.", 'error');
+            $isLoginModalOpen = true; 
             return false;
         }
         return true;
     }
 
-    const toggleInteraction = (type: 'heart' | 'bookmark') => {
+    const toggleInteraction = async (type: 'heart' | 'bookmark') => {
         if (movie.isUnverified) {
             toast.show("Cannot save unverified films. Request addition?", "error");
             return;
         }
-        
         if (!requireAuth()) return;
-        if (type === 'heart') isHearted = !isHearted;
-        if (type === 'bookmark') isBookmarked = !isBookmarked;
+
+        const listName = type === 'heart' ? 'hearts' : 'watchlist';
+        const isAdding = type === 'heart' ? !isHearted : !isBookmarked;
+
+        // Optimistic UI Update
+        if (type === 'heart') isHearted = isAdding;
+        if (type === 'bookmark') isBookmarked = isAdding;
+
+        try {
+            // Update Local Store & Firebase
+            currentUser.updateLocalLists(listName, {
+                id: String(movie.movie_id),
+                title: movie.title,
+                year: movie.year,
+                posterUrl: movie.posterUrl
+            }, isAdding);
+            
+            toast.show(isAdding ? "Saved." : "Removed.", "success");
+        } catch (err) {
+            // Revert on failure
+            if (type === 'heart') isHearted = !isAdding;
+            if (type === 'bookmark') isBookmarked = !isAdding;
+            toast.show("Sync failed.", "error");
+        }
     };
 
     const voteTag = (index: number) => {
@@ -126,10 +149,7 @@
         userTagVotes++;
         newTagValue = ''; 
         showAddTagInput = false;
-    };
-
-    const handleBackdropKeydown = (e: KeyboardEvent) => {
-        if (e.key === 'Enter' || e.key === ' ') close();
+        toast.show("Tag contributed.", "success");
     };
 </script>
 
@@ -144,7 +164,9 @@
     <div 
         onclick={(e) => e.stopPropagation()} 
         onkeydown={(e) => e.stopPropagation()}
-        class="relative w-full max-w-4xl h-[90vh] bg-[#0e0e0e] border border-white/10 rounded-[24px] shadow-2xl overflow-hidden flex flex-col md:flex-row will-change-transform"
+        role="document"
+        tabindex="-1"
+        class="relative w-full max-w-4xl h-[90vh] bg-[#0e0e0e] border border-white/10 rounded-3xl overflow-hidden flex flex-col md:flex-row will-change-transform"
     >
         <button 
             onclick={close}
@@ -161,15 +183,16 @@
                         alt={movie.title} 
                         class="w-full h-full object-cover" 
                         loading="eager"
-                        fetchpriority="high"
                         decoding="async"
                     />
                 {:else}
-                     <div class="w-full h-full bg-neutral-900 flex items-center justify-center text-neutral-700">No Image</div>
+                     <div class="w-full h-full bg-neutral-900 flex items-center justify-center text-neutral-700">
+                        <div class="absolute inset-0 bg-linear-to-br {getGradient(movie.title)} opacity-20"></div>
+                        <span class="relative z-10">No Image</span>
+                     </div>
                 {/if}
                 
                 <div class="absolute inset-0 bg-linear-to-t from-[#0e0e0e] via-[#0e0e0e]/40 to-transparent opacity-90"></div>
-                <div class="absolute inset-0 bg-linear-to-r from-black/50 to-transparent"></div>
                 
                 <div class="absolute bottom-0 left-0 w-full p-5 z-20">
                     <h2 class="text-3xl font-bold text-white tracking-tighter leading-none mb-2">
@@ -194,7 +217,7 @@
                     <span class="text-[9px] font-bold uppercase tracking-widest text-white/50">{movie.palette.name}</span>
                 </div>
 
-                <div class="grid grid-cols-3  py-2 border-b border-white/5">
+                <div class="grid grid-cols-3 py-2 border-b border-white/5">
                     <div class="flex flex-col items-center">
                         <span class="text-[9px] font-bold text-neutral-500 uppercase tracking-widest mb-0.5">Match</span>
                         <span class="text-emerald-400 font-bold text-lg">{Math.round(movie.score * 100)}%</span>
@@ -331,18 +354,29 @@
                             <h3 class="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Similarity Graph</h3>
                             <span class="text-[9px] text-neutral-600 font-normal">Database Connections</span>
                         </div>
-                        <div class="grid grid-cols-4 gap-2"> {#each movie.recommendations as rec}
-                                <div class="group flex flex-col gap-1 cursor-pointer">
-                                    <div class="relative aspect-video rounded-lg overflow-hidden border border-white/5 bg-neutral-900">
-                                        <div class="absolute inset-0 bg-linear-to-br {getGradient(rec.title)} opacity-40 group-hover:opacity-60 transition-opacity"></div>
+                        <div class="grid grid-cols-5 gap-2">
+                            {#each movie.recommendations as rec}
+                                <button 
+                                    class="cursor-pointer flex flex-col items-center group text-left w-full"
+                                    onclick={() => searchStore.performSearch(rec.title)}
+                                >
+                                    <div class="relative w-full aspect-[3/4] rounded-lg overflow-hidden mb-1.5 bg-[#111] border border-white/5 group-hover:border-white/20 transition-colors">
                                         
-                                        <div class="absolute inset-0 flex items-center justify-center p-2 text-center">
-                                            <span class="text-[10px] font-bold text-white/90 leading-tight line-clamp-2">
+                                        {#if rec.posterUrl}
+                                            <img src={rec.posterUrl} alt={rec.title} class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                                            <div class="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-60"></div>
+                                        {:else}
+                                            <div class="absolute inset-0 bg-linear-to-br {getGradient(rec.title)} opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                                            <div class="absolute inset-0 bg-linear-to-t from-[#000] via-transparent to-transparent opacity-80"></div>
+                                        {/if}
+
+                                        <div class="absolute bottom-1 left-1 right-1">
+                                            <span class="text-[8px] font-medium text-white/90 block truncate text-center leading-tight group-hover:text-white transition-colors">
                                                 {rec.title}
                                             </span>
                                         </div>
                                     </div>
-                                </div>
+                                </button>
                             {/each}
                         </div>
                     </div>
@@ -362,14 +396,14 @@
                 
                 <button 
                     onclick={() => toggleInteraction('heart')} 
-                    class="w-12 h-12 rounded-xl border border-white/10 bg-white/5 text-neutral-300 flex items-center justify-center cursor-pointer transition-all {isHearted ? 'text-rose-400 border-rose-500/30 bg-rose-500/10' : 'hover:bg-white/10'}"
+                    class="w-12 h-12 rounded-xl border border-white/10 bg-white/5 text-neutral-300 flex items-center justify-center cursor-pointer transition-colors {isHearted ? 'text-rose-400 border-rose-500/30 bg-rose-500/10' : 'hover:bg-white/10'}"
                 >
                     <Heart class="w-5 h-5 {isHearted ? 'fill-current' : ''}" />
                 </button>
 
                 <button 
                     onclick={() => toggleInteraction('bookmark')} 
-                    class="w-12 h-12 rounded-xl border border-white/10 bg-white/5 text-neutral-300 flex items-center justify-center cursor-pointer transition-all {isBookmarked ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'hover:bg-white/10'}"
+                    class="w-12 h-12 rounded-xl border border-white/10 bg-white/5 text-neutral-300 flex items-center justify-center cursor-pointer transition-colors {isBookmarked ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'hover:bg-white/10'}"
                 >
                     <Bookmark class="w-5 h-5 {isBookmarked ? 'fill-current' : ''}" />
                 </button>

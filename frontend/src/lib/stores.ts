@@ -187,7 +187,7 @@ function createSearchStore() {
                     try { return enrichMovieData(movie); } catch (err) { return null; }
                 }).filter((m: any) => m !== null);
 
-                // 2. DEDUPLICATE (The Fix)
+                // 2. DEDUPLICATE
                 // We use a Map to keep only the first occurrence of each movie_id
                 const uniqueMap = new Map();
                 enrichedRaw.forEach((m: EnrichedMovie) => {

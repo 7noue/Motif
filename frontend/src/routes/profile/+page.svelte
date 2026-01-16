@@ -1,221 +1,142 @@
 <script lang="ts">
-  import axios from 'axios';
-  import { fly, fade } from 'svelte/transition';
-  
-  // UI Components
-  import { Input } from "$lib/components/ui/input";
-  import { Button } from "$lib/components/ui/button";
-  import { Badge } from "$lib/components/ui/badge";
-  import * as Card from "$lib/components/ui/card";
-  import * as Dialog from "$lib/components/ui/dialog";
-  
-  // State
-  let query = "";
-  let movies: any[] = [];
-  let loading = false;
-  let explanation = "";
-  let selectedMovie: any = null;
-  let explainLoading = false;
-  let dialogOpen = false;
+    import { Settings, Heart, Bookmark, Tag, Trophy, Activity, Clock, Play, Award, Zap, Loader2 } from 'lucide-svelte';
+    import { currentUser } from '$lib/stores';
+    import VibeRadar from '$lib/components/profile/VibeRadar.svelte'; 
+    import { getGradient } from '$lib/logic';
 
-  // 🔭 Zoom State
-  // false = Detail (3-col, wide), true = Overview (6-col, vertical posters)
-  let isZoomedOut = false; 
+    // Mock User Stats (We'll make these real later)
+    const USER_STATS = { Melancholy: 85, Adrenaline: 40, Intellectual: 90, Wholesome: 30, Surreal: 75, Romantic: 20 };
+    const ACTIVITY_BARS = [10, 5, 2, 0, 0, 0, 5, 15, 30, 40, 50, 60, 40, 30, 20, 60, 80, 90, 100, 80, 60, 40, 30, 20];
 
-  // 1. SEARCH
-  async function searchMovies() {
-    if (!query) return;
-    loading = true;
-    try {
-      // We fetch 50 items so the dense "Overview" grid feels populated
-      const res = await axios.get(`http://127.0.0.1:8000/search?q=${query}&limit=50`);
-      movies = res.data;
-    } catch (e) {
-      console.error(e);
-    } finally {
-      loading = false;
-    }
-  }
-
-  // 2. EXPLAIN
-  async function askWhy(movie: any) {
-    selectedMovie = movie;
-    dialogOpen = true;
-    explainLoading = true;
-    explanation = "";
-
-    try {
-      const res = await axios.post('http://127.0.0.1:8000/explain', {
-        movie: movie.title,
-        query: query,
-        vibe: movie.vibe,
-        director: movie.director,
-        cast: movie.cast
-      });
-      explanation = res.data.reason;
-    } catch (e) {
-      explanation = "Honestly, the vibes were so strong the server blinked. It's a match.";
-    } finally {
-      explainLoading = false;
-    }
-  }
+    let activeTab = $state('hearts'); 
+    
+    // Reactive lists from the real store
+    let heartList = $derived($currentUser?.hearts || []);
+    let watchList = $derived($currentUser?.watchlist || []);
 </script>
 
-<main class="min-h-screen bg-black text-foreground p-8 font-sans selection:bg-purple-500">
-  
-  <div class="max-w-4xl mx-auto mb-12 text-center space-y-4">
-    <h1 class="text-7xl font-extrabold tracking-tighter bg-gradient-to-b from-white to-zinc-500 bg-clip-text text-transparent">
-      MOTIF.
-    </h1>
-    <p class="text-zinc-500 uppercase tracking-[0.2em] text-xs font-bold">
-      Context-Aware Discovery Engine
-    </p>
-  </div>
+<div class="w-full min-h-screen pb-32 px-6 pt-12 max-w-6xl mx-auto">
 
-  <div class="max-w-2xl mx-auto mb-12 flex gap-2 relative z-10">
-    <Input 
-      bind:value={query} 
-      onkeydown={(e) => e.key === 'Enter' && searchMovies()} 
-      placeholder="Identify a mood..." 
-      class="text-lg p-7 bg-zinc-900/50 border-zinc-800 focus-visible:ring-purple-500 text-white"
-    />
-    <Button 
-      onclick={searchMovies} 
-      size="lg" 
-      class="h-auto px-8 bg-white hover:bg-zinc-200 text-black font-bold transition-all"
-    >
-      {loading ? '...' : 'SEARCH'}
-    </Button>
-  </div>
-
-  {#if movies.length > 0}
-    <div class="max-w-[1600px] mx-auto mb-8 flex justify-end items-center gap-1" in:fade>
-       <span class="text-[10px] text-zinc-600 uppercase tracking-widest mr-3">View Density</span>
-       <div class="bg-zinc-900 p-1 rounded-lg flex gap-1 border border-zinc-800">
-         <Button 
-           variant={!isZoomedOut ? "secondary" : "ghost"} 
-           size="sm" 
-           onclick={() => isZoomedOut = false}
-           class="text-[10px] h-7 px-3 uppercase tracking-tighter"
-         >
-           Detail
-         </Button>
-         <Button 
-           variant={isZoomedOut ? "secondary" : "ghost"} 
-           size="sm" 
-           onclick={() => isZoomedOut = true}
-           class="text-[10px] h-7 px-3 uppercase tracking-tighter"
-         >
-           Overview
-         </Button>
-       </div>
-    </div>
-  {/if}
-
-  <div class={`mx-auto grid gap-6 transition-all duration-700 ease-in-out
-      ${isZoomedOut 
-          ? 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 max-w-[1600px]' 
-          : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 max-w-7xl'
-      }`}>
-      
-    {#each movies as movie, i}
-      <div in:fly={{ y: 20, duration: 400, delay: i * 30 }}>
-        <Card.Root 
-            class={`bg-zinc-900/30 border-zinc-800/50 hover:border-purple-500/50 transition-all cursor-pointer group h-full flex flex-col overflow-hidden
-              ${isZoomedOut ? 'hover:scale-105 active:scale-95' : ''} 
-            `}
-            onclick={() => askWhy(movie)}
-        >
-          
-          <div class={`relative overflow-hidden bg-zinc-800
-              ${isZoomedOut ? 'aspect-[2/3]' : 'aspect-video'} 
-          `}>
-            {#if movie.poster_url}
-              <img 
-                src={movie.poster_url} 
-                alt={movie.title} 
-                class="object-cover w-full h-full grayscale group-hover:grayscale-0 opacity-60 group-hover:opacity-100 transition duration-700" 
-              />
-            {/if}
-            <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-80"></div>
-            
-            <div class={`absolute bottom-3 left-3 right-3 ${isZoomedOut ? 'text-center' : ''}`}>
-              <h3 class={`font-bold text-white tracking-tight leading-tight ${isZoomedOut ? 'text-xs uppercase' : 'text-xl'}`}>
-                  {movie.title}
-              </h3>
-              {#if !isZoomedOut}
-                <p class="text-[10px] text-zinc-400 uppercase tracking-widest mt-1">{movie.director || 'Unknown Director'}</p>
-              {/if}
-            </div>
-          </div>
-
-          {#if !isZoomedOut}
-            <Card.Content class="p-6 flex-grow flex flex-col justify-between space-y-4">
-                <p class="text-sm text-zinc-400 line-clamp-3 leading-relaxed font-light">
-                {movie.vibe || movie.overview}
-                </p>
-                <div class="flex items-center justify-between pt-2">
-                <Badge variant="outline" class="border-zinc-800 text-zinc-500 text-[10px] font-mono">
-                    {movie.match_score} MATCH
-                </Badge>
-                <span class="text-[10px] font-bold text-purple-400 group-hover:translate-x-1 transition-transform uppercase tracking-widest">
-                    ASK WHY →
-                </span>
+    {#if !$currentUser}
+        <div class="flex flex-col items-center justify-center h-[50vh] text-center">
+            <h2 class="text-xl font-bold text-white mb-2">Guest Profile</h2>
+            <p class="text-neutral-500 mb-6">Sign in to view your collection and stats.</p>
+        </div>
+    {:else}
+        <div class="flex items-center justify-between mb-8">
+            <div class="flex items-center gap-4">
+                {#if $currentUser.avatar}
+                    <img src={$currentUser.avatar} alt="Profile" class="w-16 h-16 rounded-full border border-white/20 shadow-xl" />
+                {:else}
+                    <div class="w-16 h-16 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 border border-white/20 shadow-xl"></div>
+                {/if}
+                <div>
+                    <h1 class="text-2xl font-bold text-white tracking-tight">{$currentUser.name}</h1>
+                    <div class="flex items-center gap-2 text-xs text-neutral-400 mt-1">
+                        <span class="px-1.5 py-0.5 rounded bg-white/5 border border-white/5">Lv. 4 Curator</span>
+                        <span>•</span>
+                        <span>"Films for 3AM existential crises."</span>
+                    </div>
                 </div>
-            </Card.Content>
-          {:else}
-             <div class="absolute top-2 right-2 px-1.5 py-0.5 bg-black/80 rounded border border-white/10 backdrop-blur-md">
-                <span class="text-[9px] font-mono font-bold text-purple-400">
-                    {movie.match_score}
-                </span>
-             </div>
-          {/if}
+            </div>
+            <button class="p-2 rounded-full bg-[#111] border border-white/10 hover:bg-[#222] transition-colors cursor-pointer">
+                <Settings class="w-5 h-5 text-neutral-400" />
+            </button>
+        </div>
 
-        </Card.Root>
-      </div>
-    {/each}
-  </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-12">
+            <div class="lg:col-span-1 h-full min-h-[320px]">
+                <VibeRadar stats={USER_STATS} />
+            </div>
 
-  <Dialog.Root bind:open={dialogOpen}>
-    <Dialog.Content class="sm:max-w-[450px] bg-zinc-950 border-zinc-800 text-white shadow-2xl">
-      <Dialog.Header>
-        <div class="flex items-center justify-between mb-2">
-            <Dialog.Title class="text-3xl font-black tracking-tighter uppercase italic">
-            {selectedMovie?.title}
-            </Dialog.Title>
-            <div class="text-right">
-                <p class="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Confidence</p>
-                <p class="text-xl font-mono text-purple-500">{selectedMovie?.match_score}</p>
+            <div class="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 h-full">
+                <div class="p-6 rounded-3xl bg-[#0e0e0e] border border-white/5 flex flex-col justify-between group hover:border-white/10 transition-colors">
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <div class="flex items-center gap-2 text-[10px] uppercase tracking-widest text-indigo-400 font-bold mb-1">
+                                <Clock class="w-3 h-3" /> Tagging Rhythm
+                            </div>
+                            <h3 class="text-lg font-bold text-white">The Night Owl</h3>
+                        </div>
+                        <div class="text-[10px] text-neutral-500 text-right">
+                            Peak Flow<br><span class="text-white">11:00 PM</span>
+                        </div>
+                    </div>
+                    <div class="flex items-end justify-between gap-1 h-24 w-full">
+                        {#each ACTIVITY_BARS as height, i}
+                            <div class="w-full bg-white/10 rounded-sm hover:bg-indigo-500 transition-colors duration-300" style="height: {height}%; opacity: {0.3 + (height/200)}"></div>
+                        {/each}
+                    </div>
+                </div>
+
+                <div class="p-6 rounded-3xl bg-[#0e0e0e] border border-white/5 flex flex-col justify-between group hover:border-white/10 transition-colors">
+                    <div>
+                        <div class="flex items-center gap-2 text-[10px] uppercase tracking-widest text-emerald-400 font-bold mb-1">
+                            <Trophy class="w-3 h-3" /> Ecosystem Impact
+                        </div>
+                        <div class="flex items-baseline gap-1.5">
+                            <span class="text-3xl font-bold text-white">Top 15%</span>
+                            <span class="text-xs text-neutral-500">of taggers</span>
+                        </div>
+                    </div>
+                    <div class="flex gap-2 mt-4 pt-4 border-t border-white/5">
+                        <div class="w-8 h-8 rounded-full bg-[#1a1a1a] border border-white/10 flex items-center justify-center text-yellow-500 hover:bg-white/5 transition-colors" title="Early Adopter"><Award class="w-4 h-4" /></div>
+                        <div class="w-8 h-8 rounded-full bg-[#1a1a1a] border border-white/10 flex items-center justify-center text-rose-500 hover:bg-white/5 transition-colors" title="Genre Explorer"><Activity class="w-4 h-4" /></div>
+                        <div class="w-8 h-8 rounded-full bg-[#1a1a1a] border border-white/10 flex items-center justify-center text-blue-500 hover:bg-white/5 transition-colors" title="Fast Tagger"><Zap class="w-4 h-4" /></div>
+                    </div>
+                </div>
             </div>
         </div>
-      </Dialog.Header>
-      
-      <div class="py-8">
-        {#if explainLoading}
-          <div class="flex flex-col items-center gap-4 text-purple-500">
-            <div class="h-1 w-full bg-zinc-900 rounded-full overflow-hidden">
-                <div class="h-full bg-purple-500 animate-[loading_1.5s_infinite]"></div>
+
+        <div>
+            <div class="flex items-center gap-6 border-b border-white/5 mb-8">
+                <button on:click={() => activeTab = 'hearts'} class="pb-4 text-sm font-medium transition-colors border-b-2 {activeTab === 'hearts' ? 'text-white border-indigo-500' : 'text-neutral-500 border-transparent hover:text-neutral-300'}">
+                    <Heart class="w-4 h-4 inline mr-2" /> Hearts <span class="ml-1 text-xs opacity-50">{heartList.length}</span>
+                </button>
+                <button on:click={() => activeTab = 'watchlist'} class="pb-4 text-sm font-medium transition-colors border-b-2 {activeTab === 'watchlist' ? 'text-white border-indigo-500' : 'text-neutral-500 border-transparent hover:text-neutral-300'}">
+                    <Bookmark class="w-4 h-4 inline mr-2" /> Watchlist <span class="ml-1 text-xs opacity-50">{watchList.length}</span>
+                </button>
+                <button on:click={() => activeTab = 'tags'} class="pb-4 text-sm font-medium transition-colors border-b-2 {activeTab === 'tags' ? 'text-white border-indigo-500' : 'text-neutral-500 border-transparent hover:text-neutral-300'}">
+                    <Tag class="w-4 h-4 inline mr-2" /> Contributions
+                </button>
             </div>
-            <span class="text-[10px] font-bold uppercase tracking-[0.3em]">Mapping Latent Space</span>
-          </div>
-        {:else}
-          <div class="text-lg leading-relaxed border-l-4 border-purple-500 pl-6 text-zinc-200 font-medium italic">
-            "{explanation}"
-          </div>
-        {/if}
-      </div>
 
-      <Dialog.Footer>
-        <Button variant="outline" class="border-zinc-800 hover:bg-zinc-900 text-xs uppercase font-bold tracking-widest" onclick={() => dialogOpen = false}>Close</Button>
-      </Dialog.Footer>
-    </Dialog.Content>
-  </Dialog.Root>
-
-</main>
-
-<style>
-  @keyframes loading {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(100%); }
-  }
-</style>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4" style="content-visibility: auto;">
+                {#if activeTab === 'hearts'}
+                    {#if heartList.length === 0}
+                        <div class="col-span-full py-12 text-center text-neutral-600">No hearts yet. Start exploring!</div>
+                    {:else}
+                        {#each heartList as movie}
+                            <div class="group relative aspect-2/3 rounded-xl overflow-hidden bg-[#111] border border-white/5 cursor-pointer">
+                                <div class="absolute inset-0 bg-linear-to-br {getGradient(movie.title)} opacity-40 group-hover:opacity-60 transition-opacity"></div>
+                                <div class="absolute bottom-0 left-0 w-full p-3 bg-linear-to-t from-black/90 to-transparent">
+                                    <p class="text-sm font-bold text-white truncate">{movie.title}</p>
+                                    <p class="text-[10px] text-neutral-400">{movie.year}</p>
+                                </div>
+                            </div>
+                        {/each}
+                    {/if}
+                {:else if activeTab === 'watchlist'}
+                    {#if watchList.length === 0}
+                        <div class="col-span-full py-12 text-center text-neutral-600">Watchlist is empty.</div>
+                    {:else}
+                        {#each watchList as movie}
+                            <div class="group relative aspect-2/3 rounded-xl overflow-hidden bg-[#111] border border-white/5 cursor-pointer">
+                                <div class="absolute inset-0 bg-linear-to-br {getGradient(movie.title)} opacity-40 group-hover:opacity-60 transition-opacity"></div>
+                                <div class="absolute bottom-0 left-0 w-full p-3 bg-linear-to-t from-black/90 to-transparent">
+                                    <p class="text-sm font-bold text-white truncate">{movie.title}</p>
+                                    <p class="text-[10px] text-neutral-400">{movie.year}</p>
+                                </div>
+                            </div>
+                        {/each}
+                    {/if}
+                {:else}
+                    <div class="col-span-full py-12 text-center text-neutral-500 border border-dashed border-white/5 rounded-2xl">
+                        <p class="text-sm">You have contributed <span class="text-white font-bold">42 tags</span> to the ecosystem.</p>
+                        <p class="text-xs mt-2 text-neutral-600">Keep tagging to unlock the "Genre Explorer" badge.</p>
+                    </div>
+                {/if}
+            </div>
+        </div>
+    {/if}
+</div>
