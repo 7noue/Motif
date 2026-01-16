@@ -26,23 +26,16 @@
     let showAddTagInput = $state(false);
     let newTagValue = $state('');
 
-    const humanContext = {
-        perfectFor: [
-            "Late Night Contemplation",
-            "Cinephile Deep Dive", 
-            "Atmospheric Mood Setting",
-            "Philosophical Discussion"
-        ],
-        subculture: "Sigma Male Grindset / Neo-Noir Enthusiasts"
-    };
+    // --- DERIVED REAL DATA ---
+    // Extract real "Vibe" labels from the movie metadata
+    let perfectFor = $derived([
+        movie.tone_label,
+        movie.primary_aesthetic ? `${movie.primary_aesthetic} Atmosphere` : null,
+        movie.certData?.code ? `${movie.certData.code} Rated Experience` : null,
+        "Immersive Viewing"
+    ].filter(Boolean) as string[]);
 
-    const mockRecommendations = [
-        { title: "Blade Runner", year: 1982, match: 92, gradient: "from-cyan-500 to-blue-900" },
-        { title: "Drive", year: 2011, match: 88, gradient: "from-pink-500 to-rose-900" },
-        { title: "Taxi Driver", year: 1976, match: 85, gradient: "from-amber-500 to-orange-900" },
-        { title: "Nightcrawler", year: 2014, match: 83, gradient: "from-green-500 to-emerald-900" },
-        { title: "Collateral", year: 2004, match: 79, gradient: "from-purple-500 to-violet-900" }
-    ];
+    let subculture = $derived(movie.primary_aesthetic || "General Cinema");
 
     $effect(() => {
         tags = [...(movie.initialTags || [])];
@@ -69,6 +62,11 @@
     }
 
     const toggleInteraction = (type: 'heart' | 'bookmark') => {
+        if (movie.isUnverified) {
+            toast.show("Cannot save unverified films. Request addition?", "error");
+            return;
+        }
+        
         if (!requireAuth()) return;
         if (type === 'heart') isHearted = !isHearted;
         if (type === 'bookmark') isBookmarked = !isBookmarked;
@@ -142,13 +140,11 @@
   role="button"
   aria-label="Close modal"
 >
-    
     <div 
         onclick={(e) => e.stopPropagation()} 
         onkeydown={(e) => e.stopPropagation()}
         class="relative w-full max-w-4xl h-[90vh] bg-[#0e0e0e] border border-white/10 rounded-[24px] shadow-2xl overflow-hidden flex flex-col md:flex-row will-change-transform"
     >
-        
         <button 
             onclick={close}
             class="absolute top-4 right-4 z-50 p-2 bg-black/60 rounded-full text-white/70 hover:text-white border border-white/10 hover:bg-white/10 transition-colors cursor-pointer"
@@ -157,7 +153,6 @@
         </button>
 
         <div class="w-full md:w-5/12 bg-[#0e0e0e] border-r border-white/5 flex flex-col group shrink-0 relative overflow-hidden">
-             
             <div class="flex-1 relative overflow-hidden min-h-0">
                 {#if movie.posterUrl}
                     <img 
@@ -183,13 +178,12 @@
                     <div class="flex flex-wrap items-center gap-2 text-xs font-medium text-white/80">
                         <span class="text-white">{movie.year}</span>
                         <span class="w-0.5 h-0.5 rounded-full bg-white/40"></span>
-                        <span>{movie.runtime}</span>
+                        <span>{movie.runtimeStr}</span>
                     </div>
                 </div>
             </div>
 
             <div class="p-5 flex flex-col gap-5 bg-[#0e0e0e] flex-shrink-0">
-                
                 <div class="flex items-center gap-3 border-b border-white/5 pb-3">
                     <div class="flex -space-x-1.5">
                         {#each movie.palette.colors as color}
@@ -246,7 +240,7 @@
                             <Zap class="w-3 h-3 text-neutral-500" />
                             <span class="text-[9px] font-bold text-neutral-500 uppercase tracking-widest">Subculture</span>
                         </div>
-                        <span class="text-xs font-medium text-indigo-300 text-right">{humanContext.subculture}</span>
+                        <span class="text-xs font-medium text-indigo-300 text-right">{subculture}</span>
                     </div>
                 </div>
             </div>
@@ -270,10 +264,9 @@
                      <div class="mt-4 pt-3 border-t border-white/5 flex flex-col gap-1.5 text-xs text-neutral-400">
                          <p><span class="text-white font-bold uppercase text-[10px] tracking-wider mr-2">Director</span> {movie.director || 'Unknown'}</p>
                          <p><span class="text-white font-bold uppercase text-[10px] tracking-wider mr-2">Cast</span> 
-                             {movie.cast ? movie.cast.slice(0, 4).join(", ") : 'N/A'}
+                             {movie.cast ? movie.cast : 'N/A'}
                          </p>
-                          <p><span class="text-white font-bold uppercase text-[10px] tracking-wider mr-2">Genre</span> {movie.original_language ? movie.original_language.toUpperCase() : 'N/A'}</p>
-                         <p><span class="text-white font-bold uppercase text-[10px] tracking-wider mr-2">Language</span> {movie.original_language ? movie.original_language.toUpperCase() : 'N/A'}</p>
+                          <p><span class="text-white font-bold uppercase text-[10px] tracking-wider mr-2">Language</span> {movie.original_language ? movie.original_language.toUpperCase() : 'N/A'}</p>
                      </div>
                 </div>
 
@@ -282,7 +275,7 @@
                         <Users class="w-3 h-3" /> Perfect For
                     </h3>
                     <div class="grid grid-cols-2 gap-2">
-                        {#each humanContext.perfectFor as occasion}
+                        {#each perfectFor as occasion}
                             <div class="flex items-center gap-2 p-2.5 rounded-lg bg-white/5 border border-white/10">
                                 <div class="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0"></div>
                                 <span class="text-xs font-medium text-white/90 flex-1 leading-tight">
@@ -331,29 +324,32 @@
                     </div>
                 </div>
 
-                <div class="pt-4 border-t border-white/5">
-                    <div class="flex items-center justify-between mb-3">
-                        <h3 class="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Similarity Graph</h3>
-                        <span class="text-[9px] text-neutral-600 font-normal">Vibe matches</span>
-                    </div>
-                    <div class="grid grid-cols-5 gap-2">
-                        {#each mockRecommendations as rec}
-                            <div class="cursor-pointer flex flex-col items-center group">
-                                <div class="relative w-full aspect-[3/4] rounded-lg overflow-hidden mb-1.5 bg-neutral-900 border border-white/5">
-                                    <div class="absolute inset-0 bg-linear-to-br {rec.gradient} opacity-60 group-hover:opacity-80 transition-opacity"></div>
-                                    <div class="absolute bottom-1 left-1 right-1">
-                                        <span class="text-[8px] font-bold text-white/90 bg-black/60 px-1.5 py-0.5 rounded truncate block text-center">
-                                            {rec.title}
-                                        </span>
-                                    </div>
-                                    <div class="absolute top-1 right-1 px-1 py-0.5 bg-black/80 rounded text-[7px] font-bold text-emerald-400 border border-white/5">
-                                        {rec.match}%
+                {#if movie.recommendations && movie.recommendations.length > 0}
+                    <div class="pt-4 border-t border-white/5">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Similarity Graph</h3>
+                            <span class="text-[9px] text-neutral-600 font-normal">Vibe matches</span>
+                        </div>
+                        <div class="grid grid-cols-5 gap-2">
+                            {#each movie.recommendations as rec}
+                                <div class="cursor-pointer flex flex-col items-center group">
+                                    <div class="relative w-full aspect-[3/4] rounded-lg overflow-hidden mb-1.5 bg-neutral-900 border border-white/5">
+                                        {#if rec.posterUrl}
+                                            <img src={rec.posterUrl} alt={rec.title} class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                                        {:else}
+                                            <div class="absolute inset-0 bg-linear-to-br from-indigo-900 to-black opacity-60 group-hover:opacity-80 transition-opacity"></div>
+                                        {/if}
+                                        <div class="absolute bottom-1 left-1 right-1">
+                                            <span class="text-[8px] font-bold text-white/90 bg-black/60 px-1.5 py-0.5 rounded truncate block text-center">
+                                                {rec.title}
+                                            </span>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        {/each}
+                            {/each}
+                        </div>
                     </div>
-                </div>
+                {/if}
             </div>
 
             <div class="p-6 border-t border-white/5 bg-[#0e0e0e] flex items-center gap-3 z-10 mt-auto sticky bottom-0 md:static">

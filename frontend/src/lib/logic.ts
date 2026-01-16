@@ -1,42 +1,40 @@
-import { User } from 'lucide-svelte';
+import { User, Zap, Feather, AlertTriangle } from 'lucide-svelte';
 
-// --- Type Definitions ---
 export interface ApiMovie {
-    movie_id: number;
+    tmdb_id?: number | null; // Allow null
     title: string;
-    overview: string;
-    release_date?: string;
-    score?: number;
-    runtime?: string;
-    posterUrl?: string;
-    vibe_pacing?: number;
-    vibe_complexity?: number;
-    vibe_atmosphere?: number;
-    genres?: string[];
-    certData?: { code: string; reason: string };
-    cast?: string[];
+    year: number;     
+    confidence_score: number;
+    overview?: string;
+    runtime?: number;
     director?: string;
-    original_language?: string;
-    trailerUrl?: string;
-    popularity?: number;
+    cast?: string; 
+    poster_url?: string;
+    trailer_url?: string;
+    certification?: string;
+    primary_aesthetic?: string;
+    fit_quote?: string;
+    tone_label?: string;
+    vibe_signature_label?: string;
+    vibe_signature_val?: number;
+    palette?: { name: string; colors: string[] };
+    is_unverified?: boolean; // New flag from backend
 }
 
 export interface EnrichedMovie extends ApiMovie {
-    year: string;
-    score: number;
-    runtime: string;
+    movie_id: number; 
+    score: number;    
+    runtimeStr: string;
     posterUrl: string | null;
-    vibeDynamics: {
-        [key: string]: { label: string; val: number; low: string; high: string; }
-    };
+    trailerUrl: string | null;
+    vibeDynamics: { [key: string]: any };
     momentSentence: string;
-    palette: { name: string; colors: string[] };
     socialBadges: { text: string; icon: any }[];
-    initialTags: { name: string; score: number; userVoted: boolean; isCustom: boolean }[];
+    initialTags: any[];
     recommendations: any[];
+    certData: { code: string; reason: string };
+    isUnverified: boolean; // Clean flag for UI
 }
-
-// --- Logic ---
 
 export function pseudoRandom(str: string | null): number {
     let hash = 0;
@@ -51,62 +49,62 @@ export function pseudoRandom(str: string | null): number {
 
 export function getGradient(title: string): string {
     const colors = [
-        'from-rose-500 to-orange-600', 'from-violet-600 to-indigo-900',
-        'from-emerald-500 to-teal-900', 'from-blue-600 to-cyan-800', 
-        'from-amber-700 to-yellow-600',
+        'from-rose-900 to-orange-900', 'from-violet-900 to-indigo-950',
+        'from-emerald-900 to-teal-950', 'from-blue-900 to-cyan-950', 
+        'from-amber-900 to-yellow-950',
     ];
     return colors[Math.floor(pseudoRandom(title) * colors.length)];
 }
 
 export const enrichMovieData = (apiMovie: ApiMovie): EnrichedMovie => {
-    // Safety check: ensure title/id exist to prevent crashes
-    const seed = (apiMovie.title || 'Unknown') + (apiMovie.movie_id || 0);
+    const seed = (apiMovie.title || 'Unknown');
     const r = (offset = 0) => pseudoRandom(seed + offset);
 
+    // Vibe Dynamics
+    const baseVal = apiMovie.vibe_signature_val || Math.floor(r() * 100);
     const vibeDynamics = {
-        pacing: { label: "Pacing", val: apiMovie.vibe_pacing || 50, low: "Slow", high: "Fast" },
-        complexity: { label: "Cognitive Load", val: apiMovie.vibe_complexity || 50, low: "Light", high: "Heavy" },
-        atmosphere: { label: "Mood", val: apiMovie.vibe_atmosphere || 50, low: "Dark", high: "Bright" }
+        pacing: { label: "Pacing", val: baseVal, low: "Slow", high: "Fast" },
+        complexity: { label: "Cognitive Load", val: Math.floor(r(1) * 100), low: "Light", high: "Heavy" },
+        atmosphere: { label: "Mood", val: Math.floor(r(2) * 100), low: "Dark", high: "Bright" }
     };
 
-    const contextPitches = [
-        "Perfect for when you want to feel smart but don't want to work for it.",
-        "The visual equivalent of a double espresso.",
-        "Slow, methodical, and deeply rewarding.",
-        "Zero cognitive load. Just vibes.",
-        "A cinematic warm hug."
-    ];
-    
-    const palettes = [
-        { name: "Neon Noir", colors: ["#f43f5e", "#8b5cf6", "#1e293b"] },
-        { name: "Industrial", colors: ["#94a3b8", "#475569", "#0f172a"] },
-        { name: "Warm Retro", colors: ["#f59e0b", "#78350f", "#fffbeb"] },
-        { name: "Miami Sunset", colors: ["#f97316", "#db2777", "#8b5cf6"] },
-    ];
+    // Social Badges
+    const socialBadges = [];
+    if (apiMovie.is_unverified) {
+        socialBadges.push({ text: "Unverified", icon: AlertTriangle });
+    } else {
+        if (apiMovie.certification) socialBadges.push({ text: apiMovie.certification, icon: User });
+        if (apiMovie.tone_label) socialBadges.push({ text: apiMovie.tone_label, icon: Zap });
+    }
+    if (socialBadges.length === 0) socialBadges.push({ text: "Immersive", icon: Feather });
 
-    const socialBadges = [{ text: "Immersive", icon: User }]; 
-
-    const initialTags = (apiMovie.genres || []).map(name => ({
-        name, 
-        score: Math.floor(r(name) * 50) + 1, 
-        userVoted: false, 
-        isCustom: false 
-    }));
+    const castArray = typeof apiMovie.cast === 'string' ? apiMovie.cast.split(',').slice(0, 3) : [];
 
     return {
         ...apiMovie,
-        year: apiMovie.release_date || 'N/A',
-        score: apiMovie.score || 0,
-        runtime: apiMovie.runtime || "Unknown",
-        posterUrl: apiMovie.posterUrl || null,
+        
+        // --- ID HANDLING ---
+        // If unverified, we use a negative hash just for React keys, 
+        // but we FLAG it so we never save it to DB.
+        movie_id: apiMovie.tmdb_id 
+            ? apiMovie.tmdb_id 
+            : Math.floor(Math.random() * 1000000) * -1,
+        isUnverified: !!apiMovie.is_unverified,
+        score: (apiMovie.confidence_score || 0) / 100,
+        year: apiMovie.year,
+        runtimeStr: apiMovie.runtime ? `${apiMovie.runtime} min` : "Unknown",
+        posterUrl: apiMovie.poster_url || null,
+        trailerUrl: apiMovie.trailer_url || null,
+        
         vibeDynamics,
-        momentSentence: contextPitches[Math.floor(r(1) * contextPitches.length)],
-        palette: palettes[Math.floor(r(5) * palettes.length)],
+        momentSentence: apiMovie.fit_quote || "Suggested by the neural engine.",
+        palette: apiMovie.palette || { name: "Mystery", colors: ["#171717", "#262626", "#404040"] },
         socialBadges,
-        initialTags,
-        certData: apiMovie.certData || { code: "NR", reason: "Not Rated" },
-        director: apiMovie.director || "Unknown", 
-        cast: apiMovie.cast || [],
-        recommendations: [] 
+        initialTags: [
+            ...(apiMovie.primary_aesthetic ? [{ name: apiMovie.primary_aesthetic, score: 90, userVoted: false, isCustom: false }] : []),
+            ...(castArray.map(actor => ({ name: actor.trim(), score: 60, userVoted: false, isCustom: false })))
+        ],
+        recommendations: [],
+        certData: { code: apiMovie.certification || "NR", reason: "" }
     };
 };

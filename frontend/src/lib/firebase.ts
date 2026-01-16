@@ -1,0 +1,37 @@
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { getAnalytics, isSupported } from 'firebase/analytics';
+
+// Replace with your actual keys
+const firebaseConfig = {
+  apiKey: "AIzaSyAUz_e9x6VMEL0x7xfafe3EEwWnKKuCejU",
+  authDomain: "motif-914e4.firebaseapp.com",
+  projectId: "motif-914e4",
+  storageBucket: "motif-914e4.firebasestorage.app",
+  messagingSenderId: "676694689205",
+  appId: "1:676694689205:web:cf92e0aca131b8b5dd85fc",
+  measurementId: "G-ERTH4JCW85"
+};
+
+// 1. Initialize Firebase (Singleton Pattern)
+// This prevents "Firebase App already exists" errors during hot reload
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+
+// 2. Export Services
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const googleProvider = new GoogleAuthProvider();
+
+// 3. FIX: Initialize Analytics ONLY in the browser
+// We export 'analytics' as a promise or undefined to be safe
+export let analytics: any;
+
+if (typeof window !== 'undefined') {
+    isSupported().then((supported) => {
+        if (supported) {
+            analytics = getAnalytics(app);
+        }
+    });
+}
+
