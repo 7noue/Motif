@@ -125,7 +125,7 @@ def fetch_tmdb_details(tmdb_id):
             "director": director,
             "cast": cast,
             "original_language": data.get("original_language"),
-            "poster_url": f"https://image.tmdb.org/t/p/w500{data.get('poster_path')}" if data.get("poster_path") else None,
+            "poster_url": f"https://image.tmdb.org/t/p/w500{data.get('poster_path')}" if data.get('poster_path') else None,
             "trailer_url": trailer_url,
             "certification": cert_code,
             "streaming_info": ", ".join(streaming_info) if streaming_info else None,
@@ -181,6 +181,16 @@ def generate_via_ollama(movie):
 
 # --- SAVE TO SQLITE ---
 def save_to_db(movie):
+    # Safety checks for joining lists to prevent "can only join an iterable" errors
+    cast_data = movie.get("cast", [])
+    cast_str = ", ".join(cast_data) if isinstance(cast_data, list) else str(cast_data)
+
+    similar_data = movie.get("similar_films", [])
+    similar_str = ", ".join(similar_data) if isinstance(similar_data, list) else str(similar_data)
+
+    palette_colors_data = movie.get("palette_colors", [])
+    palette_colors_str = ", ".join(palette_colors_data) if isinstance(palette_colors_data, list) else ""
+
     cursor.execute("""
     INSERT OR REPLACE INTO movies (
         tmdb_id,title,year,overview,runtime,director,cast,original_language,poster_url,trailer_url,
@@ -195,7 +205,7 @@ def save_to_db(movie):
         movie["overview"],
         movie["runtime"],
         movie["director"],
-        ", ".join(movie["cast"]),
+        cast_str,
         movie["original_language"],
         movie["poster_url"],
         movie["trailer_url"],
@@ -208,11 +218,11 @@ def save_to_db(movie):
         movie.get("tone_label"),
         movie.get("emotional_aftertaste"),
         movie.get("perfect_occasion"),
-        ", ".join(movie.get("similar_films", [])),
+        similar_str,
         movie.get("vibe_signature", {}).get("label"),
         movie.get("vibe_signature", {}).get("val_percent"),
         movie.get("palette_name"),
-        ", ".join(movie.get("palette_colors", []))
+        palette_colors_str
     ))
     conn.commit()
 
