@@ -178,19 +178,26 @@ function createSearchStore() {
                 const rawData = await response.json();
                 console.log("[Search] Raw Data received:", rawData);
 
-                // FIX: Look into rawData.results, not just rawData
-                if (rawData.results) {
-                    const enriched = rawData.results.map((movie: any) => {
-                        try { return enrichMovieData(movie); } catch (err) { return null; }
-                    }).filter(Boolean);
-                    update(s => ({ ...s, movies: enriched, isLoading: false }));
+                if (!rawData.results || !Array.isArray(rawData.results)) {
+                    throw new Error("Invalid API response format");
                 }
-                
-                const enriched = rawData.results.map((movie: any) => {
+
+                // 1. Enrich Data
+                const enrichedRaw = rawData.results.map((movie: any) => {
                     try { return enrichMovieData(movie); } catch (err) { return null; }
-                }).filter(Boolean);
+                }).filter((m: any) => m !== null);
+
+                // 2. DEDUPLICATE (The Fix)
+                // We use a Map to keep only the first occurrence of each movie_id
+                const uniqueMap = new Map();
+                enrichedRaw.forEach((m: EnrichedMovie) => {
+                    if (!uniqueMap.has(m.movie_id)) {
+                        uniqueMap.set(m.movie_id, m);
+                    }
+                });
+                const finalMovies = Array.from(uniqueMap.values());
                 
-                update(s => ({ ...s, movies: enriched, isLoading: false }));
+                update(s => ({ ...s, movies: finalMovies, isLoading: false }));
             } catch (e: any) {
                 console.error("[Search] Failed:", e);
                 toast.show("Failed to connect to Motif Core.", "error");

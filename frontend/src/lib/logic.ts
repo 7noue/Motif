@@ -18,6 +18,7 @@ export interface ApiMovie {
     vibe_signature_label?: string;
     vibe_signature_val?: number;
     palette?: { name: string; colors: string[] };
+    similar_films?: string[];
     is_unverified?: boolean; // New flag from backend
 }
 
@@ -104,7 +105,10 @@ export const enrichMovieData = (apiMovie: ApiMovie): EnrichedMovie => {
             ...(apiMovie.primary_aesthetic ? [{ name: apiMovie.primary_aesthetic, score: 90, userVoted: false, isCustom: false }] : []),
             ...(castArray.map(actor => ({ name: actor.trim(), score: 60, userVoted: false, isCustom: false })))
         ],
-        recommendations: [],
+        recommendations: (apiMovie.similar_films || []).map(title => ({
+            title: title,
+            posterUrl: null // We don't have this yet, UI will use gradient
+        })),
         certData: { code: apiMovie.certification || "NR", reason: "" }
     };
 };

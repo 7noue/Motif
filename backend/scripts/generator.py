@@ -10,6 +10,7 @@ import json_repair
 
 # Import our Layer 2 logic
 from scripts.gatekeeper import InputIntelligence, QueryIntent
+# from gatekeeper import InputIntelligence, QueryIntent
 
 load_dotenv()
 
@@ -71,9 +72,9 @@ class TitleGenerationLayer:
             -Subcultural Literacy: Recognize modern internet aesthetics (Corecore, Synthwave, Dark Academia). Resolve these to the "canon" films of those online communities.
             
             RANKING GUIDELINES (THE 3-ACT STRUCTURE):
-            - ACT I (Titles 1-5): THE DEFINITIVES. Direct hits, the exact director requested, or the "Icons" of the requested subculture.
-            - ACT II (Titles 6-20): THE VIBE-MATCHES. Films that share the same cinematic DNA, psychological profiles, or aesthetic atmosphere.
-            - ACT III (Titles 21-30): THE WILDCARDS. "Deep-cut" thematic cousins that offer a fresh or unexpected perspective while remaining culturally relevant to the query.
+            - ACT I (Titles 1-12): THE DEFINITIVES. Direct hits, the exact director requested, or the "Icons" of the requested subculture.
+            - ACT II (Titles 13-25): THE VIBE-MATCHES. Films that share the same cinematic DNA, psychological profiles, or aesthetic atmosphere.
+            - ACT III (Titles 26-30): THE WILDCARDS. "Deep-cut" thematic cousins that offer a fresh or unexpected perspective while remaining culturally relevant to the query.
 
             OUTPUT DISCIPLINE:
             -Titles must be real, well-known films.
@@ -119,25 +120,34 @@ class TitleGenerationLayer:
             json.dump(self.cache, f)
 
     def fetch_titles(self, raw_input: str) -> TitleResponse:
+        logger.info(f"🧠 Raw Input Received: '{raw_input}'")
+
         # 1. Intelligence Check
         processed = self.intel.classify_intent(raw_input)
         if processed.intent == QueryIntent.LOW_SIGNAL:
             logger.warning(f"Low signal query detected: '{raw_input}'")
             return self._get_hard_fallback()
 
-        # 2. Cache Check
+        # 2. Cache Check (Updated with Error Handling)
         cache_key = self._get_cache_key(processed.normalized_text)
         if cache_key in self.cache:
-            logger.info(f"🚀 Cache Hit: '{processed.normalized_text}'")
-            return TitleResponse(titles=[FilmEntry(**t) for t in self.cache[cache_key]])
+            try:
+                # Try to validate the cached data against the current model
+                cached_titles = [FilmEntry(**t) for t in self.cache[cache_key]]
+                logger.info(f"🚀 Cache Hit: '{processed.normalized_text}'")
+                return TitleResponse(titles=cached_titles)
+            except Exception as e:
+                # If validation fails (e.g. missing fields), log it and regenerate
+                logger.warning(f"⚠️ Cache invalid for '{processed.normalized_text}', regenerating... Error: {e}")
+                # We do NOT return here; we let it fall through to step 3
 
-        # 3. Generation (OpenRouter ONLY)
-        logger.info(f"📡 Calling OpenRouter ({self.model_id}) for query: '{processed.normalized_text}'...")
+        # 3. Generation
+        logger.info(f"📡 Calling OpenRouter for query: '{processed.normalized_text}'...")
         try:
             response = self.client.chat.completions.create(
                 model=self.model_id,
                 messages=[
-                    {"role": "system", "content": self.system_instructions + "\nReturn ONLY valid JSON."},
+                    {"role": "system", "content": self.system_instructions},
                     {"role": "user", "content": processed.normalized_text},
                 ],
                 response_format={'type': 'json_object'},
@@ -146,16 +156,14 @@ class TitleGenerationLayer:
             
             raw_content = response.choices[0].message.content
             
-            # Debug log to see raw output if needed (commented out by default)
-            # logger.debug(f"Raw API Response: {raw_content}")
+            # --- DEBUG LOGGING: RAW LLM OUTPUT ---
+            # This shows exactly what the model sent back
+            logger.info(f"📝 RAW LLM JSON:\n{raw_content}") 
+            # -------------------------------------
 
-            # Use json_repair to fix common LLM JSON errors
             cleaned_data = json_repair.loads(raw_content)
-            
-            # NOTE: Use model_validate (for dicts), NOT model_validate_json
             parsed_response = TitleResponse.model_validate(cleaned_data)
             
-            # Save to cache on success
             self._save_to_cache(cache_key, [t.model_dump() for t in parsed_response.titles])
             
             logger.info(f"✅ Successfully generated {len(parsed_response.titles)} titles.")
@@ -180,12 +188,12 @@ if __name__ == "__main__":
     query = "Dead poets society"
     result = layer.fetch_titles(query)
     print(f"\n[Final Results for '{query}']: {len(result.titles)} films found.")
-    for t in result.titles[:5]:
+    for t in result.titles[:15]:
         print(f" - {t.title} ({t.year}) - ({t.confidence_score}%)")
 
     # Test 2
     query = "Sigma grindset"
     result = layer.fetch_titles(query)
     print(f"\n[Final Results for '{query}']: {len(result.titles)} films found.")
-    for t in result.titles[:5]:
+    for t in result.titles[:15]:
         print(f" - {t.title} ({t.year}) - ({t.confidence_score}%)")

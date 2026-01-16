@@ -1,8 +1,9 @@
 <script lang="ts">
     import { X, Play, Heart, Bookmark, Brain, Gauge, Star, Users, Zap } from 'lucide-svelte';
     import { createEventDispatcher } from 'svelte';
-    import { currentUser, toast } from '$lib/stores';
+    import { currentUser, toast , searchStore} from '$lib/stores';
     import type { EnrichedMovie } from '$lib/logic';
+    import { getGradient } from '$lib/logic';
 
     let { movie } = $props<{ movie: EnrichedMovie }>();
     
@@ -328,19 +329,15 @@
                     <div class="pt-4 border-t border-white/5">
                         <div class="flex items-center justify-between mb-3">
                             <h3 class="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Similarity Graph</h3>
-                            <span class="text-[9px] text-neutral-600 font-normal">Vibe matches</span>
+                            <span class="text-[9px] text-neutral-600 font-normal">Database Connections</span>
                         </div>
-                        <div class="grid grid-cols-5 gap-2">
-                            {#each movie.recommendations as rec}
-                                <div class="cursor-pointer flex flex-col items-center group">
-                                    <div class="relative w-full aspect-[3/4] rounded-lg overflow-hidden mb-1.5 bg-neutral-900 border border-white/5">
-                                        {#if rec.posterUrl}
-                                            <img src={rec.posterUrl} alt={rec.title} class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
-                                        {:else}
-                                            <div class="absolute inset-0 bg-linear-to-br from-indigo-900 to-black opacity-60 group-hover:opacity-80 transition-opacity"></div>
-                                        {/if}
-                                        <div class="absolute bottom-1 left-1 right-1">
-                                            <span class="text-[8px] font-bold text-white/90 bg-black/60 px-1.5 py-0.5 rounded truncate block text-center">
+                        <div class="grid grid-cols-4 gap-2"> {#each movie.recommendations as rec}
+                                <div class="group flex flex-col gap-1 cursor-pointer">
+                                    <div class="relative aspect-video rounded-lg overflow-hidden border border-white/5 bg-neutral-900">
+                                        <div class="absolute inset-0 bg-linear-to-br {getGradient(rec.title)} opacity-40 group-hover:opacity-60 transition-opacity"></div>
+                                        
+                                        <div class="absolute inset-0 flex items-center justify-center p-2 text-center">
+                                            <span class="text-[10px] font-bold text-white/90 leading-tight line-clamp-2">
                                                 {rec.title}
                                             </span>
                                         </div>

@@ -1,17 +1,25 @@
 import os
 import json
-from fastapi import FastAPI, HTTPException, Query
+import logging
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional, List, Union
 from dotenv import load_dotenv
+
+# Import logic
 from scripts.generator import TitleGenerationLayer, FilmEntry
+from scripts.db import find_movie_metadata
 
 load_dotenv()
 
-# --- CONFIG ---
+# --- LOGGING ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("MotifAPI")
+
 app = FastAPI(title="Motif Engine API")
 
-# Enable CORS
+# --- CORS ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
@@ -20,58 +28,153 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize the title generation layer
 layer = TitleGenerationLayer()
 
-# --- Pydantic Models ---
+# --- MODELS ---
+
+class MoviePalette(BaseModel):
+    name: str
+    colors: List[str]
+
+class EnrichedFilmEntry(BaseModel):
+    tmdb_id: Optional[int] = None
+    title: str
+    year: int
+    confidence_score: int
+    overview: Optional[str] = None
+    runtime: Optional[int] = None
+    director: Optional[str] = None
+    cast: Optional[str] = None
+    poster_url: Optional[str] = None
+    trailer_url: Optional[str] = None
+    certification: Optional[str] = None
+    primary_aesthetic: Optional[str] = None
+    fit_quote: Optional[str] = None
+    tone_label: Optional[str] = None
+    vibe_signature_label: Optional[str] = None
+    vibe_signature_val: Optional[Union[int, float]] = None 
+    palette: Optional[MoviePalette] = None
+    
+    # NEW FLAG: Tells frontend if this is a "real" movie or just an AI guess
+    is_unverified: bool = False
+    similar_films: Optional[List[str]] = []
 
 class SearchResponse(BaseModel):
     count: int
-    results: list[FilmEntry]
+    results: List[EnrichedFilmEntry]
 
 class ContextResponse(BaseModel):
     fit_quote: str
     social_context: str
 
-# --- API ENDPOINTS ---
-@app.get("/")
-def health_check():
-    return {"status": "Motif Engine Online", "version": "2.0"}
+# FIX: Define the expected JSON body for POST requests
+class SearchRequest(BaseModel):
+    query: str
+    top_k: int = 9
+    user_id: Optional[str] = None
 
-@app.get("/search", response_model=SearchResponse)
-def search_movies(q: str = Query(..., min_length=2)):
-    """
-    Returns up to 30 AI-associated films with confidence scores.
-    """
-    result = layer.fetch_titles(q)
-    results_dicts = [t.model_dump() for t in result.titles]
+# --- ENDPOINTS ---
+
+@app.post("/search", response_model=SearchResponse)
+@app.post("/api/search", response_model=SearchResponse) 
+def search_movies(request: SearchRequest):
+    logger.info(f"🔎 Search Request: {request.query}")
+    
+    ai_result = layer.fetch_titles(request.query)
+    enriched_results = []
+
+    for film in ai_result.titles:
+        db_data = find_movie_metadata(film.title, film.year)
+        
+        entry_data = {
+            "title": film.title,
+            "year": film.year,
+            "confidence_score": film.confidence_score,
+        }
+
+        if db_data:
+            # --- REAL DATA FOUND ---
+            palette_obj = None
+            if db_data.get("palette_colors"):
+                try:
+                    colors = json.loads(db_data["palette_colors"]) if isinstance(db_data["palette_colors"], str) else []
+                    palette_obj = MoviePalette(
+                        name=db_data.get("palette_name", "Unknown"),
+                        colors=colors
+                    )
+                except:
+                    pass
+
+            similars = []
+            if db_data.get("similar_films"):
+                try:
+                    similars = json.loads(db_data["similar_films"])
+                except:
+                    # Fallback if it's just a comma-separated string
+                    similars = [s.strip() for s in str(db_data["similar_films"]).split(',')]
+
+            vibe_val = db_data.get("vibe_signature_val")
+            if vibe_val is not None and isinstance(vibe_val, float) and vibe_val <= 1.0:
+                vibe_val = int(vibe_val * 100)
+            elif vibe_val is not None:
+                vibe_val = int(vibe_val)
+
+            entry_data.update({
+                "tmdb_id": db_data["tmdb_id"],
+                "overview": db_data["overview"],
+                "runtime": db_data["runtime"],
+                "director": db_data["director"],
+                "cast": db_data["cast"],
+                "poster_url": db_data["poster_url"],
+                "trailer_url": db_data["trailer_url"],
+                "certification": db_data["certification"],
+                "primary_aesthetic": db_data["primary_aesthetic"],
+                "fit_quote": db_data["fit_quote"], 
+                "tone_label": db_data["tone_label"],
+                "vibe_signature_label": db_data["vibe_signature_label"],
+                "vibe_signature_val": vibe_val,
+                "palette": palette_obj,
+                "similar_films": similars,
+                "is_unverified": False
+            })
+        else:
+            # --- MISSING DATA (AI SUGGESTION ONLY) ---
+            # We do NOT fake the ID. We send None.
+            entry_data.update({
+                "tmdb_id": None, 
+                "overview": "⚠️ AI Suggestion: This film is not yet archived in the Motif database.",
+                "runtime": 0,
+                "director": "Unknown",
+                "cast": "",
+                "poster_url": None,
+                "trailer_url": None,
+                "certification": "AI", # Label for the UI badge
+                "primary_aesthetic": "Unverified",
+                "fit_quote": "Suggested by the neural engine.",
+                "tone_label": "Concept",
+                "vibe_signature_label": "Potential",
+                "vibe_signature_val": 50,
+                "palette": None,
+                "similar_films": [],
+                "is_unverified": True
+            })
+        
+        enriched_results.append(EnrichedFilmEntry(**entry_data))
+
     return SearchResponse(
-        count=len(result.titles),
-        results=result.titles
+        count=len(enriched_results),
+        results=enriched_results
     )
 
 @app.get("/explain", response_model=ContextResponse)
 def explain_movie(title: str, query: str):
-    """
-    Returns real-time explanation for a specific film.
-    Generates a fit_quote + social_context in a human/bro tone.
-    """
     from openai import OpenAI
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.getenv("OPENROUTER_API_KEY"),
     )
 
-    prompt = f"""
-User Query: "{query}"
-Selected Movie: "{title}"
-
-Task: Write a short, human/bro-style explanation (max 20 words) why this film fits the user's query.
-Tone: Friendly, relatable, casual, insightful, not invasive.
-Include also a short social context hint (1–2 words), like "watch with friends" or "solo chill".
-Return ONLY valid JSON:
-{{ "fit_quote": "string", "social_context": "string" }}
-"""
+    prompt = f"Explain why '{title}' fits '{query}' in 20 words (bro style)."
 
     try:
         resp = client.chat.completions.create(
@@ -81,15 +184,10 @@ Return ONLY valid JSON:
             temperature=0.5
         )
         return json.loads(resp.choices[0].message.content)
-
-    except Exception as e:
-        print(f"❌ OpenRouter Explain Error: {e}")
-        return ContextResponse(
-            fit_quote=f"This movie vibes with '{query}' perfectly.",
-            social_context="Universal"
-        )
-
+    except:
+        return ContextResponse(fit_quote="Vibes match.", social_context="Universal")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Reload=True is important for dev!
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
